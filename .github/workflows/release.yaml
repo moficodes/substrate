@@ -155,7 +155,7 @@ jobs:
     # created, so a release cannot be published without its images. Skipped
     # in a dry run.
     if: ${{ !cancelled() && !inputs.dry_run_images && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     # Creating a release needs contents: write.
     permissions:

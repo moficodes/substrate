@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   run-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     # A bound well clear of the observed runtime. Without one the platform
     # default applies, and a wedged step burns a free-tier slot for six hours.
     timeout-minutes: 45
@@ -47,6 +47,9 @@ jobs:
       uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       with:
         fetch-depth: 0
+    - name: Fetch upstream main on forks
+      if: github.repository != 'agent-substrate/substrate'
+      run: git fetch --no-tags https://github.com/agent-substrate/substrate.git main:refs/remotes/upstream/main
     - name: Setup Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
@@ -100,13 +103,6 @@ jobs:
         sudo apt-get update -qq
         sudo apt-get install -y -qq --no-install-recommends clang libclang-dev
         hack/test-dynamic-modules.sh
-    # Root-gated tests (overlay mounts, whiteout mknod, trusted.* xattrs, ...)
-    # skip for the unprivileged runner user above; rerun the packages that
-    # contain them (any test importing internal/roottest) under sudo.
-    - name: root-gated tests
-      env:
-        ROOT_JUNIT_FILE: ${{ github.workspace }}/_artifacts/root.xml
-      run: hack/run-root-tests.sh -race
     # An exit code cannot distinguish "all passed" from "none ran". A registered
     # file that was never written fails too.
     - name: Require tests to have run
@@ -125,9 +121,41 @@ jobs:
         if-no-files-found: error
     - name: verify
       run: hack/verify-all.sh
+  run-root-tests:
+    if: github.repository == 'agent-substrate/substrate' || vars.SUBSTRATE_ADMIN_RUNNER != ''
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    env:
+      ARTIFACTS: ${{ github.workspace }}/_artifacts
+    steps:
+    - name: Checkout
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      with:
+        fetch-depth: 0
+    - name: Setup Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: 'go.mod'
+    - name: root-gated tests
+      env:
+        ROOT_JUNIT_FILE: ${{ github.workspace }}/_artifacts/root.xml
+      run: hack/run-root-tests.sh -race
+    - name: Require tests to have run
+      if: always()
+      run: go -C tools/junittool run . verify -manifest "${ARTIFACTS}/expected-junit.txt"
+    - name: Summarize test failures
+      if: always()
+      run: go -C tools/junittool run . report "${ARTIFACTS}"
+    - name: Upload root test results
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: test-results-root
+        path: ${{ env.ARTIFACTS }}
+        if-no-files-found: error
   verify-migrations:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
     - name: Checkout
@@ -147,10 +175,11 @@ jobs:
   # below are written once and run for every dataplane and preview mode. The
   # envoy entry with preview features off reports the required e2e-test check.
   e2e-test:
+    if: github.repository == 'agent-substrate/substrate' || vars.SUBSTRATE_ADMIN_RUNNER != ''
     name: >-
       ${{ (matrix.dataplane == 'envoy' && matrix.preview == 'off') && 'e2e-test'
         || format('e2e-test ({0}{1})', matrix.dataplane, matrix.preview == 'on' && ', preview' || '') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
     # Cluster bring-up, image builds and two sequential lanes; generous, but far
     # short of the six-hour platform default a hung lane would otherwise consume.
     timeout-minutes: 120
