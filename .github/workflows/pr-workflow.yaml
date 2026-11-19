@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   run-tests:
-    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || vars.SUBSTRATE_MICROVM_RUNNER || 'ubuntu-latest' }}
     # A bound well clear of the observed runtime. Without one the platform
     # default applies, and a wedged step burns a free-tier slot for six hours.
     timeout-minutes: 45
@@ -63,6 +63,8 @@ jobs:
     # NOTE: no -v with gotestsum, it replaces the -test.v=test2json that -json
     # sets, which marks t.Error output for the failure report below
     - name: unit tests
+      env:
+        CI: ${{ (github.repository == 'agent-substrate/substrate' || vars.SUBSTRATE_ADMIN_RUNNER != '') && 'true' || '' }}
       run: |
         go -C tools/junittool run . register "${ARTIFACTS}/unit.xml"
         hack/run-tool.sh gotestsum --junitfile "${ARTIFACTS}/unit.xml" \

@@ -62,6 +62,9 @@ jobs:
       with:
         # site-release-data needs the latest release tag and its history.
         fetch-depth: 0
+    - name: Fetch upstream release tags on forks
+      if: github.repository != 'agent-substrate/substrate'
+      run: git fetch --tags https://github.com/agent-substrate/substrate.git
     - name: Setup Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
