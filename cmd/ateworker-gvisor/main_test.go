@@ -344,3 +344,17 @@ func TestValidateRunscPathRequiresTheActorsOwnDir(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateNoGuestAdmin(t *testing.T) {
+	if err := validateNoGuestAdmin(&ateworkerpb.WorkloadSpec{
+		Containers: []*ateworkerpb.Container{{Name: "app", ContainerSpec: &ateworkerpb.ContainerSpec{}}},
+	}); err != nil {
+		t.Fatalf("validateNoGuestAdmin(false) = %v, want nil", err)
+	}
+	err := validateNoGuestAdmin(&ateworkerpb.WorkloadSpec{
+		Containers: []*ateworkerpb.Container{{Name: "runner", ContainerSpec: &ateworkerpb.ContainerSpec{GuestAdmin: true}}},
+	})
+	if apierror.Code(err) != codes.InvalidArgument {
+		t.Fatalf("validateNoGuestAdmin(true) code = %v (%v), want %v", apierror.Code(err), err, codes.InvalidArgument)
+	}
+}

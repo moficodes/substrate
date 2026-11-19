@@ -422,6 +422,12 @@ var linuxCapabilities = sets.New(
 	"CHECKPOINT_RESTORE",
 )
 
+// AllLinuxCapabilities returns the sorted list of Linux capability names
+// without the "CAP_" prefix.
+func AllLinuxCapabilities() []string {
+	return sets.List(linuxCapabilities)
+}
+
 // AllowedAddCapabilities are the capabilities a container may add.
 var AllowedAddCapabilities = sets.New(
 	"AUDIT_WRITE", "CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL",

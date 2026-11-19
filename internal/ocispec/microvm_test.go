@@ -305,3 +305,34 @@ func TestShapeMicroVM_SystemMounts(t *testing.T) {
 		}
 	}
 }
+
+func TestShapeMicroVM_GuestAdmin(t *testing.T) {
+	spec := Build(parityOptions)
+	if err := ShapeMicroVM(spec, MicroVMOptions{ActorDirs: parityActorDirs, ContainerName: "app", GuestAdmin: true}); err != nil {
+		t.Fatalf("ShapeMicroVM(GuestAdmin=true) = %v", err)
+	}
+	if len(spec.Linux.MaskedPaths) != 0 {
+		t.Errorf("MaskedPaths = %v, want empty", spec.Linux.MaskedPaths)
+	}
+	if len(spec.Linux.ReadonlyPaths) != 0 {
+		t.Errorf("ReadonlyPaths = %v, want empty", spec.Linux.ReadonlyPaths)
+	}
+	for _, want := range []specs.Mount{
+		{Destination: "/dev", Type: "bind", Source: "/dev", Options: []string{"rbind", "rw"}},
+		{Destination: "/sys", Type: "sysfs", Source: "sysfs", Options: []string{"nosuid", "noexec", "nodev", "rw"}},
+		{Destination: "/sys/fs/cgroup", Type: "cgroup2", Source: "cgroup", Options: []string{"nosuid", "noexec", "nodev", "rw"}},
+	} {
+		if got := mountFor(t, spec, want.Destination); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s =\n%+v\nwant\n%+v", want.Destination, got, want)
+		}
+	}
+	for _, absent := range []string{"/dev/pts", "/dev/shm", "/sys/firmware", "/proc/acpi"} {
+		if slices.ContainsFunc(spec.Mounts, func(m specs.Mount) bool { return m.Destination == absent }) {
+			t.Errorf("unexpected mount at %s in GuestAdmin spec", absent)
+		}
+	}
+	wantDevices := []specs.LinuxDeviceCgroup{{Allow: true, Access: "rwm"}}
+	if !reflect.DeepEqual(spec.Linux.Resources.Devices, wantDevices) {
+		t.Errorf("Devices = %+v, want %+v", spec.Linux.Resources.Devices, wantDevices)
+	}
+}

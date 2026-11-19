@@ -32,6 +32,7 @@ import (
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/volume"
+	"go.ate.dev/substrate/pkg/sandboxclass"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -579,10 +580,22 @@ func schedulingConstraints(actor *ateapi.Actor, tmpl *ateapi.ActorTemplate) sche
 		RequiredNodes:   requiredNodes,
 		Limits:          tmpl.GetResources().GetLimits(),
 	}
+	if c.SandboxClass == "" && templateRequiresGuestAdmin(tmpl) {
+		c.SandboxClass = sandboxclass.MicroVM
+	}
 	if sel := tmpl.GetWorkerSelector(); sel != nil {
 		c.TemplateSelector = labels.SelectorFromSet(labels.Set(sel.GetMatchLabels()))
 	}
 	return c
+}
+
+func templateRequiresGuestAdmin(tmpl *ateapi.ActorTemplate) bool {
+	for _, ctr := range tmpl.GetContainers() {
+		if ctr.GetSecurityContext().GetGuestAdmin() {
+			return true
+		}
+	}
+	return false
 }
 
 // snapshotToResume returns the snapshot ResumeActor restores from: the latest

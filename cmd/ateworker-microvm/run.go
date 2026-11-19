@@ -531,7 +531,7 @@ func (s *AteWorkerService) coldBootActor(ctx context.Context, p actorBootParams)
 	// on a failed agent dial below, so keep it here.
 	consoleLog := kata.ConsoleLogPath(actorUID)
 	vmCfg := buildVMConfig(actorUID, kernel, image, kparams, consoleLog, memMiB, vcpus,
-		agentInit(ctx, client.Info()), s.guestDebug)
+		agentInit(ctx, client.Info()), hasGuestAdminContainer(containers), s.guestDebug)
 	if err := client.CreateVM(ctx, vmCfg); err != nil {
 		return fmt.Errorf("while creating VM: %w", err)
 	}
@@ -651,7 +651,11 @@ func (s *AteWorkerService) buildActorContainers(actorUID string, actorDirs *atew
 		cn := c.GetName()
 		bundle := ociBundlePath(actorDirs, cn)
 		spec := ocispec.Build(ocispec.Options{ActorUID: actorUID, ActorDirs: actorDirs, Container: c})
-		if err := ocispec.ShapeMicroVM(spec, ocispec.MicroVMOptions{ActorDirs: actorDirs, ContainerName: cn}); err != nil {
+		if err := ocispec.ShapeMicroVM(spec, ocispec.MicroVMOptions{
+			ActorDirs:     actorDirs,
+			ContainerName: cn,
+			GuestAdmin:    c.GetContainerSpec().GetGuestAdmin(),
+		}); err != nil {
 			return nil, fmt.Errorf("while shaping the OCI spec for %q: %w", cn, err)
 		}
 		// Compose the bundle rootfs from the node's cached image layers (an
@@ -798,7 +802,16 @@ func initParams(agentInit bool) string {
 // with earlycon (and pays the ~800ms) for diagnosing a guest that dies before then.
 //
 // swiotlb=noforce skips the software bounce buffer.
-func buildVMConfig(id, kernel, image, kparams, consoleLog string, memMiB, vcpus int, agentInit, debug bool) ch.VmConfig {
+func hasGuestAdminContainer(containers []*ateworkerpb.Container) bool {
+	for _, c := range containers {
+		if c.GetContainerSpec().GetGuestAdmin() {
+			return true
+		}
+	}
+	return false
+}
+
+func buildVMConfig(id, kernel, image, kparams, consoleLog string, memMiB, vcpus int, agentInit, nested, debug bool) ch.VmConfig {
 	cmdline := "root=/dev/pmem0p1 rootflags=dax,data=ordered,errors=remount-ro ro rootfstype=ext4 " +
 		"panic=1 no_timer_check noreplace-smp console=hvc0 swiotlb=noforce " +
 		initParams(agentInit)
@@ -814,7 +827,7 @@ func buildVMConfig(id, kernel, image, kparams, consoleLog string, memMiB, vcpus 
 		serial = &ch.ConsoleConfig{Mode: "File", File: kata.SerialLogPath(id)}
 	}
 	return ch.VmConfig{
-		Cpus:    ch.CpusConfig{BootVcpus: int32(vcpus), MaxVcpus: int32(vcpus)},
+		Cpus:    ch.CpusConfig{BootVcpus: int32(vcpus), MaxVcpus: int32(vcpus), Nested: nested},
 		Memory:  ch.MemoryConfig{Size: int64(memMiB) * 1024 * 1024, Shared: true},
 		Payload: ch.PayloadConfig{Kernel: kernel, Cmdline: cmdline},
 		// The guest image is a virtio-pmem device (/dev/pmem0), mounted read-only

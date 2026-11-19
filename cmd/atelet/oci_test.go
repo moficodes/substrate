@@ -300,3 +300,19 @@ func TestResolveCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSecurityCapabilitiesGuestAdmin(t *testing.T) {
+	got := resolveSecurityCapabilities(&ateletpb.SecurityContext{GuestAdmin: true})
+	for _, want := range []string{"CAP_SYS_ADMIN", "CAP_NET_ADMIN", "CAP_MKNOD", "CAP_BPF", "CAP_SETUID"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("resolveSecurityCapabilities(guest_admin=true) missing %q in %v", want, got)
+		}
+	}
+	dropped := resolveSecurityCapabilities(&ateletpb.SecurityContext{
+		GuestAdmin:   true,
+		Capabilities: &ateletpb.Capabilities{Drop: []string{"SYS_BOOT"}},
+	})
+	if slices.Contains(dropped, "CAP_SYS_BOOT") {
+		t.Errorf("resolveSecurityCapabilities(guest_admin=true, drop=SYS_BOOT) kept CAP_SYS_BOOT")
+	}
+}

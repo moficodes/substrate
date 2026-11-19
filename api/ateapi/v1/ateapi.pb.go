@@ -3440,7 +3440,16 @@ type SecurityContext struct {
 	// capabilities adjusts the Linux capabilities of the container's process.
 	//
 	// +k8s:optional
-	Capabilities  *Capabilities `protobuf:"bytes,1,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
+	Capabilities *Capabilities `protobuf:"bytes,1,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
+	// guest_admin grants the container guest-VM administration inside a
+	// microVM sandbox: nested hardware virtualization, all Linux capabilities,
+	// read-write /sys and /sys/fs/cgroup mounts, unmasked /proc/sys, and
+	// access to guest /dev devices. Rejected on runtimes other than microvm.
+	//
+	// +ate:preview=GuestAdmin
+	// +k8s:ifDisabled(GuestAdmin)=+k8s:forbidden
+	// +k8s:optional
+	GuestAdmin    bool `protobuf:"varint,2,opt,name=guest_admin,json=guestAdmin,proto3" json:"guest_admin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3480,6 +3489,13 @@ func (x *SecurityContext) GetCapabilities() *Capabilities {
 		return x.Capabilities
 	}
 	return nil
+}
+
+func (x *SecurityContext) GetGuestAdmin() bool {
+	if x != nil {
+		return x.GuestAdmin
+	}
+	return false
 }
 
 // Capabilities adjusts a container's Linux capabilities relative to the
@@ -10167,9 +10183,11 @@ const file_api_ateapi_v1_ateapi_proto_rawDesc = "" +
 	"\fwakeup_probe\x18\x06 \x01(\v2 .substrate.ateapi.v1.WakeupProbeR\vwakeupProbe\x12E\n" +
 	"\rvolume_mounts\x18\a \x03(\v2 .substrate.ateapi.v1.VolumeMountR\fvolumeMounts\x12O\n" +
 	"\x10security_context\x18\b \x01(\v2$.substrate.ateapi.v1.SecurityContextR\x0fsecurityContext\x12G\n" +
-	"\tresources\x18\t \x01(\v2).substrate.ateapi.v1.ResourceRequirementsR\tresources\"X\n" +
+	"\tresources\x18\t \x01(\v2).substrate.ateapi.v1.ResourceRequirementsR\tresources\"y\n" +
 	"\x0fSecurityContext\x12E\n" +
-	"\fcapabilities\x18\x01 \x01(\v2!.substrate.ateapi.v1.CapabilitiesR\fcapabilities\"4\n" +
+	"\fcapabilities\x18\x01 \x01(\v2!.substrate.ateapi.v1.CapabilitiesR\fcapabilities\x12\x1f\n" +
+	"\vguest_admin\x18\x02 \x01(\bR\n" +
+	"guestAdmin\"4\n" +
 	"\fCapabilities\x12\x10\n" +
 	"\x03add\x18\x01 \x03(\tR\x03add\x12\x12\n" +
 	"\x04drop\x18\x02 \x03(\tR\x04drop\"7\n" +

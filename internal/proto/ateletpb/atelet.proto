@@ -852,6 +852,9 @@ message Container {
 message SecurityContext {
   // +k8s:optional
   Capabilities capabilities = 1;
+
+  // +k8s:optional
+  bool guest_admin = 2;
 }
 
 // Capabilities adjusts a container's Linux capabilities relative to the default
