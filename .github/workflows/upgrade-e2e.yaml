@@ -32,7 +32,7 @@ permissions:
 jobs:
   upgrade:
     name: Upgrade e2e (${{ matrix.sandbox }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
     strategy:
       fail-fast: false

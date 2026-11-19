@@ -54,7 +54,7 @@ env:
   HUGO_VERSION: 0.163.3
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
     - name: Checkout

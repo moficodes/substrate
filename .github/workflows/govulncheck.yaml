@@ -17,15 +17,17 @@ on:
   push:
     branches:
       - main
+      - spike/gha-admin-pr
   schedule:
     - cron: "37 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   govulncheck:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:

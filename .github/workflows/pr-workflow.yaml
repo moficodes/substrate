@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   run-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
     # A bound well clear of the observed runtime. Without one the platform
     # default applies, and a wedged step burns a free-tier slot for six hours.
     timeout-minutes: 45
@@ -127,7 +127,7 @@ jobs:
       run: hack/verify-all.sh
   verify-migrations:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
     - name: Checkout
@@ -150,7 +150,7 @@ jobs:
     name: >-
       ${{ (matrix.dataplane == 'envoy' && matrix.preview == 'off') && 'e2e-test'
         || format('e2e-test ({0}{1})', matrix.dataplane, matrix.preview == 'on' && ', preview' || '') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
     # Cluster bring-up, image builds and two sequential lanes; generous, but far
     # short of the six-hour platform default a hung lane would otherwise consume.
     timeout-minutes: 120

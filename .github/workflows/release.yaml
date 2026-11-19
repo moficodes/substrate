@@ -55,7 +55,7 @@ jobs:
   # The only job that writes to a registry.
   images:
     if: github.repository == 'agent-substrate/substrate' && !inputs.dry_run_images
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -110,7 +110,7 @@ jobs:
   # duration of this job. Runs only when started manually with dry_run_images.
   images-dry-run:
     if: inputs.dry_run_images
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_ADMIN_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     services:
       registry:
@@ -155,7 +155,7 @@ jobs:
     # created, so a release cannot be published without its images. Skipped
     # in a dry run.
     if: ${{ !cancelled() && !inputs.dry_run_images && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUBSTRATE_USERLAND_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     # Creating a release needs contents: write.
     permissions:
