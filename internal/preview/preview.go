@@ -45,6 +45,10 @@ const (
 	// GateGoldenEgressPolicy controls configuring a golden actor's egress policy on its template.
 	GateGoldenEgressPolicy Gate = "GoldenEgressPolicy"
 
+	// GateGuestAdmin controls whether a container may request guest-VM
+	// administration via SecurityContext.guest_admin on microVM workers.
+	GateGuestAdmin Gate = "GuestAdmin"
+
 	// GatePerTemplateSnapshotLocation controls whether an ActorTemplate may
 	// set snapshotConfig.storage_location. When disabled, the API rejects the
 	// field and snapshots are stored under ate-api-server's
@@ -64,6 +68,7 @@ const All = "ALL"
 var realKnownGates = []Gate{
 	GateExternalVolumes,
 	GateGoldenEgressPolicy,
+	GateGuestAdmin,
 	GatePerTemplateSnapshotLocation,
 	GateIngressCache,
 }

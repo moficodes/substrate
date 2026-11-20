@@ -645,8 +645,20 @@ func validateFidelity(fidelity ateworkerpb.SnapshotFidelity) error {
 	return resources.ToAPIError(errs)
 }
 
+func validateNoGuestAdmin(spec *ateworkerpb.WorkloadSpec) error {
+	for _, c := range spec.GetContainers() {
+		if c.GetContainerSpec().GetGuestAdmin() {
+			return apierror.InvalidArgument("container %q sets security_context.guest_admin, which requires the microvm runtime", c.GetName())
+		}
+	}
+	return nil
+}
+
 func (s *AteWorkerService) RunWorkload(ctx context.Context, req *ateworkerpb.RunWorkloadRequest) (resp *ateworkerpb.RunWorkloadResponse, retErr error) {
 	if err := ateworkervalidation.ValidateRunWorkloadRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	if err := validateNoGuestAdmin(req.GetSpec()); err != nil {
 		return nil, err
 	}
 	epoch, err := s.epoch.Require()
@@ -1098,6 +1110,9 @@ func isContainerAlreadyGone(ctx context.Context, rcmd containerRuntime, name str
 
 func (s *AteWorkerService) RestoreWorkload(ctx context.Context, req *ateworkerpb.RestoreWorkloadRequest) (resp *ateworkerpb.RestoreWorkloadResponse, retErr error) {
 	if err := ateworkervalidation.ValidateRestoreWorkloadRequest(ctx, req); err != nil {
+		return nil, err
+	}
+	if err := validateNoGuestAdmin(req.GetSpec()); err != nil {
 		return nil, err
 	}
 	epoch, err := s.epoch.Require()

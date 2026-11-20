@@ -55,6 +55,9 @@ type MicroVMOptions struct {
 	// staged into the share.
 	ActorDirs     *ateworkerpb.ActorDirs
 	ContainerName string
+	// GuestAdmin grants guest-VM administration mounts and device access inside
+	// the microVM sandbox.
+	GuestAdmin bool
 }
 
 // ShapeMicroVM repoints volume bind mounts to guest share paths, applies
@@ -81,11 +84,6 @@ func ShapeMicroVM(spec *specs.Spec, o MicroVMOptions) error {
 			}
 		}
 	}
-	// Mask each directory with a read-only tmpfs, as runc's maskDir does.
-	// https://github.com/opencontainers/runc/blob/7d36b05953ebb377900a0a565d8b0754e464be0b/libcontainer/rootfs_linux.go#L1338-L1350
-	for _, dir := range guestMaskedDirPaths(runtime.GOARCH) {
-		spec.Mounts = append(spec.Mounts, specs.Mount{Destination: dir, Type: "tmpfs", Source: "tmpfs", Options: []string{"ro", "nr_blocks=1", "nr_inodes=1"}})
-	}
 
 	if spec.Linux == nil {
 		spec.Linux = &specs.Linux{}
@@ -102,6 +100,17 @@ func ShapeMicroVM(spec *specs.Spec, o MicroVMOptions) error {
 	if _, ok := spec.Linux.Sysctl["net.ipv4.ping_group_range"]; !ok {
 		spec.Linux.Sysctl["net.ipv4.ping_group_range"] = "0 2147483647"
 	}
+
+	if o.GuestAdmin {
+		shapeGuestAdminMicroVM(spec)
+		return nil
+	}
+
+	// Mask each directory with a read-only tmpfs, as runc's maskDir does.
+	// https://github.com/opencontainers/runc/blob/7d36b05953ebb377900a0a565d8b0754e464be0b/libcontainer/rootfs_linux.go#L1338-L1350
+	for _, dir := range guestMaskedDirPaths(runtime.GOARCH) {
+		spec.Mounts = append(spec.Mounts, specs.Mount{Destination: dir, Type: "tmpfs", Source: "tmpfs", Options: []string{"ro", "nr_blocks=1", "nr_inodes=1"}})
+	}
 	// gVisor needs neither list: its procfs and sysfs leave out the masked
 	// files and keep most of /proc/sys read-only.
 	spec.Linux.MaskedPaths = guestMaskedFilePaths()
@@ -110,6 +119,77 @@ func ShapeMicroVM(spec *specs.Spec, o MicroVMOptions) error {
 	// sets CgroupsPath.
 	spec.Linux.Resources = mergeKataResources(spec.Linux.Resources)
 	return nil
+}
+
+// shapeGuestAdminMicroVM configures a container's mounts and device cgroup for
+// guest-VM administration inside a microVM. It bind-mounts the guest's /dev
+// (including its devpts and shm submounts), mounts /sys and /sys/fs/cgroup
+// read-write, leaves /proc unmasked, and allows all guest devices.
+func shapeGuestAdminMicroVM(spec *specs.Spec) {
+	mounts := make([]specs.Mount, 0, len(spec.Mounts)+1)
+	for _, m := range spec.Mounts {
+		switch {
+		case m.Destination == "/dev" && m.Type == "tmpfs":
+			mounts = append(mounts, specs.Mount{
+				Destination: "/dev",
+				Type:        "bind",
+				Source:      "/dev",
+				Options:     []string{"rbind", "rw"},
+			})
+		case m.Destination == "/dev/pts" && m.Type == "devpts":
+			// Keep the guest devtmpfs /dev/pts carried by the rbind /dev mount
+			// so /dev/ptmx (c 5:2) and /dev/pts stay in the same devpts instance.
+			continue
+		case m.Destination == "/dev/shm" && m.Type == "tmpfs":
+			// Keep the guest /dev/shm carried by the rbind /dev mount so shared
+			// memory is not capped at 64 MiB.
+			continue
+		case m.Destination == "/sys" && m.Type == "sysfs":
+			mounts = append(mounts,
+				specs.Mount{
+					Destination: "/sys",
+					Type:        "sysfs",
+					Source:      "sysfs",
+					Options:     []string{"nosuid", "noexec", "nodev", "rw"},
+				},
+				specs.Mount{
+					Destination: "/sys/fs/cgroup",
+					Type:        "cgroup2",
+					Source:      "cgroup",
+					Options:     []string{"nosuid", "noexec", "nodev", "rw"},
+				},
+			)
+		default:
+			mounts = append(mounts, m)
+		}
+	}
+	spec.Mounts = mounts
+	spec.Linux.MaskedPaths = nil
+	spec.Linux.ReadonlyPaths = nil
+	spec.Linux.Resources = mergeGuestAdminResources(spec.Linux.Resources)
+}
+
+func mergeGuestAdminResources(from *specs.LinuxResources) *specs.LinuxResources {
+	shares := uint64(1024)
+	allowAll := []specs.LinuxDeviceCgroup{{Allow: true, Access: "rwm"}}
+	if from == nil {
+		return &specs.LinuxResources{
+			Devices: allowAll,
+			CPU:     &specs.LinuxCPU{Shares: &shares},
+		}
+	}
+	out := *from
+	if len(out.Devices) == 0 {
+		out.Devices = allowAll
+	}
+	if out.CPU == nil {
+		out.CPU = &specs.LinuxCPU{Shares: &shares}
+	} else if out.CPU.Shares == nil {
+		cpu := *out.CPU
+		cpu.Shares = &shares
+		out.CPU = &cpu
+	}
+	return &out
 }
 
 // mergeKataResources fills in the kata defaults that the caller's spec leaves

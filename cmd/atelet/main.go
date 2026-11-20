@@ -2275,13 +2275,15 @@ func (s *Atelet) prepareOCIBundles(
 			if err != nil {
 				return fmt.Errorf("while resolving user for container %q: %w", ctr.GetName(), err)
 			}
+			secCtx := ctr.GetSecurityContext()
 			containerSpecs[i] = &ateworkerpb.ContainerSpec{
 				Args:         args,
 				Env:          resolveActorEnv(&img.Config, envs),
-				Capabilities: resolveCapabilities(ctr.GetSecurityContext().GetCapabilities()),
+				Capabilities: resolveSecurityCapabilities(secCtx),
 				Resources:    toAteworkerResources(ctr.GetResources()),
 				User:         user,
 				Cwd:          cwd,
+				GuestAdmin:   secCtx.GetGuestAdmin(),
 			}
 			return nil
 		})

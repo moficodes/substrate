@@ -58,10 +58,11 @@ type PlatformConfig struct {
 	NumPciSegments int32 `json:"num_pci_segments,omitempty"`
 }
 
-// CpusConfig sets the boot/max vCPU counts.
+// CpusConfig sets the boot/max vCPU counts and nested virtualization flag.
 type CpusConfig struct {
 	BootVcpus int32 `json:"boot_vcpus"`
 	MaxVcpus  int32 `json:"max_vcpus"`
+	Nested    bool  `json:"nested,omitempty"`
 }
 
 // MemoryConfig sets guest RAM. Shared=true makes CH back RAM with a memfd, which

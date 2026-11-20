@@ -502,6 +502,11 @@ func TestWorkloadSpecFromActorTemplatePropagatesSecurityContext(t *testing.T) {
 				Image:           "third",
 				SecurityContext: &ateapi.SecurityContext{Capabilities: &ateapi.Capabilities{}},
 			},
+			{
+				Name:            "admin",
+				Image:           "fourth",
+				SecurityContext: &ateapi.SecurityContext{GuestAdmin: true},
+			},
 		},
 	}, nil, nil)
 	if err != nil {
@@ -528,10 +533,34 @@ func TestWorkloadSpecFromActorTemplatePropagatesSecurityContext(t *testing.T) {
 				Name:  "empty",
 				Image: "third",
 			},
+			{
+				Name:            "admin",
+				Image:           "fourth",
+				SecurityContext: &ateletpb.SecurityContext{GuestAdmin: true},
+			},
 		},
 	}
 	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
 		t.Errorf("WorkloadSpec mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestSchedulingConstraintsGuestAdminPinsMicroVM(t *testing.T) {
+	actor := &ateapi.Actor{
+		Metadata: &ateapi.ResourceMetadata{Atespace: "ns", Name: "a1", Uid: "u1"},
+		Status:   &ateapi.ActorStatus{},
+	}
+	tmpl := &ateapi.ActorTemplate{
+		Metadata: &ateapi.ResourceMetadata{Atespace: "ns", Name: "t1"},
+		Containers: []*ateapi.Container{{
+			Name:            "runner",
+			Image:           "img",
+			SecurityContext: &ateapi.SecurityContext{GuestAdmin: true},
+		}},
+	}
+	got := schedulingConstraints(actor, tmpl)
+	if got.SandboxClass != "microvm" {
+		t.Errorf("schedulingConstraints().SandboxClass = %q, want \"microvm\"", got.SandboxClass)
 	}
 }
 

@@ -701,6 +701,13 @@ func TestValidateActorTemplate(t *testing.T) {
 			}}
 		},
 	}, {
+		name: "security_context guest_admin requires GuestAdmin preview gate",
+		mutate: func(tmpl *ateapi.ActorTemplate) {
+			tmpl.Containers[0].SecurityContext = &ateapi.SecurityContext{GuestAdmin: true}
+		},
+		want:            field.ErrorList{field.Forbidden(field.NewPath("containers").Index(0).Child("security_context", "guest_admin"), "")},
+		wantWithPreview: map[string]field.ErrorList{"GuestAdmin": nil, "ALL": nil},
+	}, {
 		name: "capabilities add rejects ALL",
 		mutate: func(tmpl *ateapi.ActorTemplate) {
 			tmpl.Containers[0].SecurityContext = &ateapi.SecurityContext{Capabilities: &ateapi.Capabilities{Add: []string{"ALL"}}}

@@ -32,6 +32,7 @@ import (
 	"go.ate.dev/substrate/internal/imagecache"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"
+	"go.ate.dev/substrate/internal/resources"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/errgroup"
@@ -52,13 +53,27 @@ var defaultCapabilities = []string{
 	"NET_BIND_SERVICE",
 }
 
+// resolveSecurityCapabilities computes a container's effective capability set
+// from its SecurityContext. When guest_admin is true, the base set includes
+// every Linux capability; otherwise it starts from defaultCapabilities.
+func resolveSecurityCapabilities(secCtx *ateletpb.SecurityContext) []string {
+	if secCtx.GetGuestAdmin() {
+		return resolveCapabilitiesFromBase(resources.AllLinuxCapabilities(), secCtx.GetCapabilities())
+	}
+	return resolveCapabilities(secCtx.GetCapabilities())
+}
+
 // resolveCapabilities computes a container's effective capability set as
 // default - drop + add. Drop applies first, so a capability named in both is
 // granted. The result is CAP_-prefixed and sorted for a stable OCI spec: the
 // spec is written on every run and a reordered set would churn the bundle.
 func resolveCapabilities(caps *ateletpb.Capabilities) []string {
-	effective := make(map[string]struct{}, len(defaultCapabilities))
-	for _, c := range defaultCapabilities {
+	return resolveCapabilitiesFromBase(defaultCapabilities, caps)
+}
+
+func resolveCapabilitiesFromBase(base []string, caps *ateletpb.Capabilities) []string {
+	effective := make(map[string]struct{}, len(base))
+	for _, c := range base {
 		effective[c] = struct{}{}
 	}
 	for _, d := range caps.GetDrop() {

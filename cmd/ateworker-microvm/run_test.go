@@ -168,7 +168,7 @@ func TestBuildVMConfigConsole(t *testing.T) {
 	const id = "actor-1"
 	consoleLog := kata.ConsoleLogPath(id)
 
-	cfg := buildVMConfig(id, "/vmlinux", "/rootfs.img", "", consoleLog, 256, 1, true, false)
+	cfg := buildVMConfig(id, "/vmlinux", "/rootfs.img", "", consoleLog, 256, 1, true, false, false)
 	if cfg.Console == nil || cfg.Console.Mode != "File" || cfg.Console.File != consoleLog {
 		t.Errorf("Console = %+v, want File %q", cfg.Console, consoleLog)
 	}
@@ -185,7 +185,7 @@ func TestBuildVMConfigConsole(t *testing.T) {
 		t.Errorf("cmdline = %q, must not pay for earlycon outside debug mode", cfg.Payload.Cmdline)
 	}
 
-	dbg := buildVMConfig(id, "/vmlinux", "/rootfs.img", "", consoleLog, 256, 1, true, true)
+	dbg := buildVMConfig(id, "/vmlinux", "/rootfs.img", "", consoleLog, 256, 1, true, false, true)
 	if dbg.Serial == nil || dbg.Serial.Mode != "File" || dbg.Serial.File != kata.SerialLogPath(id) {
 		t.Errorf("debug Serial = %+v, want File %q", dbg.Serial, kata.SerialLogPath(id))
 	}
@@ -233,11 +233,31 @@ func TestKernelParamsDebugConsole(t *testing.T) {
 }
 
 func TestBuildVMConfigBalloon(t *testing.T) {
-	cfg := buildVMConfig("actor-1", "/vmlinux", "/rootfs.img", "", "/console.log", 256, 1, true, false)
+	cfg := buildVMConfig("actor-1", "/vmlinux", "/rootfs.img", "", "/console.log", 256, 1, true, false, false)
 	if cfg.Balloon == nil || !cfg.Balloon.FreePageReporting || cfg.Balloon.Size != 0 {
 		t.Fatalf("cfg.Balloon = %+v, want size 0 with free page reporting", cfg.Balloon)
 	}
 	if b, err := json.Marshal(cfg); err != nil || !strings.Contains(string(b), `"balloon":{"size":0,"free_page_reporting":true}`) {
 		t.Errorf("VmConfig JSON = %s, %v; want the balloon section cloud-hypervisor expects", b, err)
+	}
+}
+
+func TestBuildVMConfigNestedVirt(t *testing.T) {
+	plain := buildVMConfig("actor-1", "/vmlinux", "/rootfs.img", "", "/console.log", 256, 2, true, false, false)
+	if plain.Cpus.Nested {
+		t.Fatal("plain.Cpus.Nested = true, want false")
+	}
+	bPlain, err := json.Marshal(plain)
+	if err != nil || strings.Contains(string(bPlain), `"nested"`) {
+		t.Errorf("plain VmConfig JSON = %s, %v; want nested omitted when false", bPlain, err)
+	}
+
+	admin := buildVMConfig("actor-1", "/vmlinux", "/rootfs.img", "", "/console.log", 256, 8, true, true, false)
+	if !admin.Cpus.Nested {
+		t.Fatal("admin.Cpus.Nested = false, want true")
+	}
+	bAdmin, err := json.Marshal(admin)
+	if err != nil || !strings.Contains(string(bAdmin), `"nested":true`) {
+		t.Errorf("admin VmConfig JSON = %s, %v; want \"nested\":true", bAdmin, err)
 	}
 }

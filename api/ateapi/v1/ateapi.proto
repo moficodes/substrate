@@ -1402,6 +1402,16 @@ message SecurityContext {
   //
   // +k8s:optional
   Capabilities capabilities = 1;
+
+  // guest_admin grants the container guest-VM administration inside a
+  // microVM sandbox: nested hardware virtualization, all Linux capabilities,
+  // read-write /sys and /sys/fs/cgroup mounts, unmasked /proc/sys, and
+  // access to guest /dev devices. Rejected on runtimes other than microvm.
+  //
+  // +ate:preview=GuestAdmin
+  // +k8s:ifDisabled(GuestAdmin)=+k8s:forbidden
+  // +k8s:optional
+  bool guest_admin = 2;
 }
 
 // Capabilities adjusts a container's Linux capabilities relative to the
