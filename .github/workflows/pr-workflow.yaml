@@ -234,8 +234,9 @@ jobs:
             && '["envoy", "agentgateway"]'
             || '["envoy"]'
           ) }}
-        # "off" is the default install, and proves the suites pass without
-        # preview features; "on" enables every one of them.
+        # "off" is the default install, and runs the full suites without preview
+        # features; "on" enables every preview gate and runs the preview-gated
+        # tests.
         preview: ['off', 'on']
         sandbox: [gvisor, microvm]
     env:
@@ -346,25 +347,33 @@ jobs:
         sudo modprobe nfsd || true
     - name: Install CSI NFS driver
       run: go run ./cmd/ate-setup --kind setup csi nfs
-    # Deploy only the demos for the class under test. The suites build their
-    # actors from the counter and egress ActorTemplates for that class. The
-    # egress demo's actors trust the CA the gateway mints its leaves from.
-    - name: Deploy demos (${{ matrix.sandbox }})
+    # Deploy only the demos for the class under test. Preview lanes skip the
+    # egress demo because no preview-gated test uses EgressFixture.
+    - name: Deploy counter demo (${{ matrix.sandbox }})
       env:
         DEMO_SUFFIX: ${{ matrix.sandbox == 'microvm' && '-microvm' || '' }}
-      run: |
-        go run ./cmd/ate-setup --kind deploy demo "counter${DEMO_SUFFIX}"
-        go run ./cmd/ate-setup --kind deploy demo "egress${DEMO_SUFFIX}"
+      run: go run ./cmd/ate-setup --kind deploy demo "counter${DEMO_SUFFIX}"
+    - name: Deploy egress demo (${{ matrix.sandbox }})
+      if: matrix.preview == 'off'
+      env:
+        DEMO_SUFFIX: ${{ matrix.sandbox == 'microvm' && '-microvm' || '' }}
+      run: go run ./cmd/ate-setup --kind deploy demo "egress${DEMO_SUFFIX}"
     - name: Trust local TLS origins in egress gateway
       run: hack/setup-e2e-egress-tls-kind.sh
     - name: Run E2E tests (${{ matrix.sandbox }})
-      # E2E_SANDBOX_CLASS repoints every fixture at its micro-VM variant (see
-      # internal/e2e/sandbox.go). Empty selects gVisor.
+      # E2E_SANDBOX_CLASS repoints every fixture at its microVM variant (see
+      # internal/e2e/sandbox.go). Empty selects gVisor. Preview lanes run only
+      # the tests whose behavior depends on a preview gate.
+      # TestPreviewWorkflowFilter checks that every preview-gated test matches.
       env:
         E2E_SANDBOX_CLASS: ${{ matrix.sandbox == 'microvm' && 'microvm' || '' }}
         E2E_PARALLELISM: 8
         E2E_JUNIT_FILE: ${{ github.workspace }}/_artifacts/${{ env.LANE }}.xml
-      run: hack/run-e2e-kind.sh -args --no-color --preview="${ATE_PREVIEW}"
+        PREVIEW_RUN_REGEX: ${{ matrix.preview == 'on' && '^(TestActorSnapshotLifecycle|TestExternalVolume.*|TestDeleteRunningActorWithExternalVolume|TestCombinedVolumes|TestGoldenBootEgress|TestIngressCache_.*|TestRepointMovesTheGrant)$' || '' }}
+      run: >-
+        hack/run-e2e-kind.sh
+        ${PREVIEW_RUN_REGEX:+-run="${PREVIEW_RUN_REGEX}"}
+        -args --no-color --preview="${ATE_PREVIEW}"
     # The lane must have reported tests; a `-run` filter that stops matching
     # otherwise leaves it green and empty. run-e2e.sh registers the lane in the
     # manifest, and refuses to run in CI without E2E_JUNIT_FILE.

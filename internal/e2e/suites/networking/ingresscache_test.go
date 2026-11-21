@@ -287,7 +287,6 @@ func TestIngressCache_BodyBypassesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeRouterEnvoyMetrics before POST: %v", err)
 	}
-	hitBefore := e2e.RouterCacheCounterValue(scrapeBefore, "ate_ingress_cache_hit")
 	bypassBefore := e2e.RouterCacheCounterValue(scrapeBefore, "ate_ingress_cache_bypass")
 
 	// 3. A POST with a body skips the stale entry and succeeds through ext_proc.
@@ -301,13 +300,12 @@ func TestIngressCache_BodyBypassesCache(t *testing.T) {
 		t.Fatalf("POST with body returned status %d, want 200; body: %s", resp.StatusCode, body)
 	}
 
-	// 4. It counted as a bypass, not a hit.
+	// 4. Don't check ate_ingress_cache_hit: other suites running in parallel hit
+	// the router. Succeeding against the suspended actor's stale entry already
+	// requires bypassing the cache.
 	scrapeAfter, err := e2e.ScrapeRouterEnvoyMetrics(ctx)
 	if err != nil {
 		t.Fatalf("ScrapeRouterEnvoyMetrics after POST: %v", err)
-	}
-	if hitAfter := e2e.RouterCacheCounterValue(scrapeAfter, "ate_ingress_cache_hit"); hitAfter != hitBefore {
-		t.Fatalf("expected ate_ingress_cache_hit unchanged for a request with a body, before=%.0f, after=%.0f", hitBefore, hitAfter)
 	}
 	if bypassAfter := e2e.RouterCacheCounterValue(scrapeAfter, "ate_ingress_cache_bypass"); bypassAfter <= bypassBefore {
 		t.Fatalf("expected ate_ingress_cache_bypass to increment, before=%.0f, after=%.0f", bypassBefore, bypassAfter)
@@ -411,7 +409,6 @@ func TestIngressCache_GRPCBypassesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScrapeRouterEnvoyMetrics before call: %v", err)
 	}
-	hitBefore := e2e.RouterCacheCounterValue(scrapeBefore, "ate_ingress_cache_hit")
 	bypassBefore := e2e.RouterCacheCounterValue(scrapeBefore, "ate_ingress_cache_bypass")
 
 	// 3. The next call skips the stale entry and succeeds through ext_proc.
@@ -425,13 +422,11 @@ func TestIngressCache_GRPCBypassesCache(t *testing.T) {
 		t.Fatalf("Echo after suspend got %q, want %q", resp.GetMessage(), message)
 	}
 
-	// 4. It counted as a bypass, not a hit.
+	// 4. Don't check ate_ingress_cache_hit: other suites running in parallel hit
+	// the router.
 	scrapeAfter, err := e2e.ScrapeRouterEnvoyMetrics(ctx)
 	if err != nil {
 		t.Fatalf("ScrapeRouterEnvoyMetrics after call: %v", err)
-	}
-	if hitAfter := e2e.RouterCacheCounterValue(scrapeAfter, "ate_ingress_cache_hit"); hitAfter != hitBefore {
-		t.Fatalf("expected ate_ingress_cache_hit unchanged for a gRPC call, before=%.0f, after=%.0f", hitBefore, hitAfter)
 	}
 	if bypassAfter := e2e.RouterCacheCounterValue(scrapeAfter, "ate_ingress_cache_bypass"); bypassAfter <= bypassBefore {
 		t.Fatalf("expected ate_ingress_cache_bypass to increment, before=%.0f, after=%.0f", bypassBefore, bypassAfter)
