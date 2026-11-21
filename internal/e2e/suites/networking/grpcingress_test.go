@@ -142,7 +142,7 @@ func TestIngressGRPC(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	fixture := deployGRPCEchoTemplate(t, ctx)
+	fixture := deployGRPCEchoTemplate(t, ctx, "networking")
 	_, actorName, _ := createAndResumeSubstrateActor(t, ctx, "grpcingress", fixture)
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
 	ctx = metadata.AppendToOutgoingContext(ctx,
@@ -258,12 +258,11 @@ func TestIngressGRPC(t *testing.T) {
 }
 
 // deployGRPCEchoTemplate installs the gRPC Actor fixture for the sandbox class
-// under test, waits for its golden snapshot and returns it. The suite gets its
-// own copy of the fixture: suite packages run as concurrent processes, so a
-// shared one would be deleted out from under another.
-func deployGRPCEchoTemplate(t *testing.T, ctx context.Context) e2e.SubstrateFixture {
+// under test, waits for its golden snapshot, and returns it. name suffixes the
+// fixture's namespace and atespace so callers do not collide during async teardown.
+func deployGRPCEchoTemplate(t *testing.T, ctx context.Context, name string) e2e.SubstrateFixture {
 	t.Helper()
-	atespace, _ := e2e.DeploySubstrateFixture(t, ctx, e2e.GetClients(), grpcEchoFixtureManifests, "networking", nil)
+	atespace, _ := e2e.DeploySubstrateFixture(t, ctx, e2e.GetClients(), grpcEchoFixtureManifests, name, nil)
 	return e2e.SubstrateFixture{
 		Atespace:   atespace,
 		Name:       "grpcecho",
