@@ -183,7 +183,7 @@ func createTemplate(ctx context.Context, t *testing.T, clients *e2e.Clients, ns 
 	t.Helper()
 
 	// The probe supplies this suite's container image and resolved runtime.
-	probeAtespace, _ := e2e.DeployProbe(t, "combinedvolumes")
+	probeAtespace, _ := e2e.DeployProbe(t, "combinedvolumes", e2e.WithoutGoldenSnapshot())
 	src := e2e.SubstrateFixture{
 		Atespace:      probeAtespace,
 		Name:          probeName,

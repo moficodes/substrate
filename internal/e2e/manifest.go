@@ -15,13 +15,14 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -96,63 +97,187 @@ func yamlListBlock[T any](t *testing.T, key string, items []T, indent int) strin
 	return strings.Join(out, "\n")
 }
 
-// koApply builds and pushes the ko:// images named in manifest and applies it.
-//
-// Through the repo's pinned ko (hack/run-tool.sh), because CI does not install
-// ko on PATH and every other deploy in this repo goes through that wrapper. The
-// trailing `-- --context=...` is how ko's apply subcommand takes a context: it
-// forwards args after `--` to kubectl. KO_CONFIG_PATH is required
-// because ko resolves .ko.yaml from its working directory, which is the test's
-// package dir rather than the repo root; without it the build silently loses
-// defaultPlatforms and produces images that cannot run on the cluster's nodes.
-func koApply(t *testing.T, manifest string) {
+// koImagesEnv holds pre-resolved digest-pinned fixture images built once by
+// hack/run-e2e.sh, as a YAML stream of "importPath[|imageUser]: image" maps.
+const koImagesEnv = "E2E_KO_IMAGES"
+
+// koRefPattern matches a ko:// reference up to the first YAML scalar delimiter.
+var koRefPattern = regexp.MustCompile(`ko://[^\s"',\]}]+`)
+
+type koImageKey struct {
+	importPath string
+	imageUser  string
+}
+
+type koImageBuilder interface {
+	build(t *testing.T, importPath, imageUser string) string
+}
+
+type pinnedKoBuilder struct{}
+
+// build resolves one ko:// import path through hack/run-tool.sh. KO_CONFIG_PATH
+// points ko at the repository root's .ko.yaml from the suite's package dir.
+func (pinnedKoBuilder) build(t *testing.T, importPath, imageUser string) string {
 	t.Helper()
 	root, err := FindRepoRoot()
 	if err != nil {
 		t.Fatalf("FindRepoRoot: %v", err)
-	}
-	applyArgs := []string{"ko", "apply", "-f", manifest}
-	if KubeContext != "" {
-		applyArgs = append(applyArgs, "--", "--context="+KubeContext)
-	}
-	RunCmdWithEnv(t, []string{"KO_CONFIG_PATH=" + root}, filepath.Join(root, "hack/run-tool.sh"), applyArgs...)
-}
-
-// koResolve builds and pushes the ko:// images named in manifest and returns
-// the manifest with those references replaced by pushed digests. Same pinned
-// ko and KO_CONFIG_PATH rules as koApply; resolve is how a manifest that is
-// not destined for kubectl (a protojson ActorTemplate document) still gets
-// its image built. args go to ko resolve before the manifest.
-func koResolve(t *testing.T, manifest string, args ...string) []byte {
-	t.Helper()
-	root, err := FindRepoRoot()
-	if err != nil {
-		t.Fatalf("FindRepoRoot: %v", err)
-	}
-	resolveArgs := append([]string{"ko", "resolve"}, args...)
-	resolveArgs = append(resolveArgs, "-f", manifest)
-	return RunCmdOutput(t, []string{"KO_CONFIG_PATH=" + root}, filepath.Join(root, "hack/run-tool.sh"), resolveArgs...)
-}
-
-// ResolveFixtureImage builds a fixture through the same ko resolver used by
-// fixture manifests and returns its digest-pinned image reference.
-func ResolveFixtureImage(t *testing.T, importPath string) string {
-	t.Helper()
-	pod := corev1.Pod{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "fixture", Image: "ko://" + importPath}}}}
-	raw, err := yaml.Marshal(pod)
-	if err != nil {
-		t.Fatal(err)
 	}
 	manifest := filepath.Join(t.TempDir(), "fixture-image.yaml")
-	if err := os.WriteFile(manifest, raw, 0o600); err != nil {
+	if err := os.WriteFile(manifest, []byte("image: ko://"+importPath+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := yaml.Unmarshal(koResolve(t, manifest), &pod); err != nil {
-		t.Fatal(err)
+	resolveArgs := []string{"ko", "resolve"}
+	if imageUser != "" {
+		resolveArgs = append(resolveArgs, "--image-user", imageUser)
 	}
-	image := pod.Spec.Containers[0].Image
-	if !strings.Contains(image, "@sha256:") {
-		t.Fatalf("fixture image %q is not pinned by digest", image)
+	resolveArgs = append(resolveArgs, "-f", manifest)
+	raw := RunCmdOutput(t, []string{"KO_CONFIG_PATH=" + root}, filepath.Join(root, "hack/run-tool.sh"), resolveArgs...)
+	doc, _, _ := strings.Cut(string(raw), "\n---")
+	var out struct {
+		Image string `json:"image"`
 	}
-	return image
+	if err := yaml.Unmarshal([]byte(doc), &out); err != nil {
+		t.Fatalf("decoding resolved fixture image for %s: %v", importPath, err)
+	}
+	if !strings.Contains(out.Image, "@sha256:") {
+		t.Fatalf("fixture image %q for %s is not pinned by digest", out.Image, importPath)
+	}
+	return out.Image
+}
+
+type koCacheEntry struct {
+	once  sync.Once
+	image string
+}
+
+type koImageCache struct {
+	builder koImageBuilder
+	entries sync.Map
+}
+
+func newKoImageCache(preloaded map[koImageKey]string, builder koImageBuilder) *koImageCache {
+	c := &koImageCache{builder: builder}
+	for k, image := range preloaded {
+		e := &koCacheEntry{image: image}
+		e.once.Do(func() {})
+		c.entries.Store(k, e)
+	}
+	return c
+}
+
+func (c *koImageCache) resolve(t *testing.T, importPath, imageUser string) string {
+	t.Helper()
+	key := koImageKey{importPath: importPath, imageUser: imageUser}
+	actual, _ := c.entries.LoadOrStore(key, &koCacheEntry{})
+	entry := actual.(*koCacheEntry)
+	entry.once.Do(func() {
+		entry.image = c.builder.build(t, importPath, imageUser)
+	})
+	if entry.image == "" {
+		t.Fatalf("resolving fixture image %s failed in an earlier test", importPath)
+	}
+	return entry.image
+}
+
+func (c *koImageCache) rewriteManifest(t *testing.T, raw []byte, imageUser string) []byte {
+	t.Helper()
+	var lines []string
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			line = koRefPattern.ReplaceAllStringFunc(line, func(match string) string {
+				return c.resolve(t, strings.TrimPrefix(match, "ko://"), imageUser)
+			})
+		}
+		lines = append(lines, line)
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+func parseKoImageMap(raw string) (map[koImageKey]string, error) {
+	out := make(map[koImageKey]string)
+	for doc := range strings.SplitSeq(raw, "\n---") {
+		if strings.TrimSpace(doc) == "" {
+			continue
+		}
+		var m map[string]string
+		if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", koImagesEnv, err)
+		}
+		for k, image := range m {
+			importPath, imageUser, _ := strings.Cut(k, "|")
+			if importPath == "" {
+				return nil, fmt.Errorf("%s contains an empty import path key %q", koImagesEnv, k)
+			}
+			if !strings.Contains(image, "@sha256:") {
+				return nil, fmt.Errorf("%s entry %q = %q is not pinned by digest", koImagesEnv, k, image)
+			}
+			out[koImageKey{importPath: importPath, imageUser: imageUser}] = image
+		}
+	}
+	return out, nil
+}
+
+var (
+	koImagesOnce  sync.Once
+	koImagesCache *koImageCache
+	koImagesErr   error
+)
+
+func sharedKoImages(t *testing.T) *koImageCache {
+	t.Helper()
+	koImagesOnce.Do(func() {
+		preloaded, err := parseKoImageMap(os.Getenv(koImagesEnv))
+		if err != nil {
+			koImagesErr = err
+			return
+		}
+		koImagesCache = newKoImageCache(preloaded, pinnedKoBuilder{})
+	})
+	if koImagesErr != nil {
+		t.Fatal(koImagesErr)
+	}
+	return koImagesCache
+}
+
+// ApplyManifest resolves ko:// image references in manifest and applies the
+// resulting YAML with kubectl.
+func ApplyManifest(t *testing.T, manifest string) {
+	t.Helper()
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("reading manifest %s: %v", manifest, err)
+	}
+	resolved := sharedKoImages(t).rewriteManifest(t, raw, "")
+	resolvedPath := filepath.Join(t.TempDir(), filepath.Base(manifest))
+	if err := os.WriteFile(resolvedPath, resolved, 0o600); err != nil {
+		t.Fatalf("writing resolved manifest %s: %v", resolvedPath, err)
+	}
+	applyArgs := []string{"apply", "-f", resolvedPath}
+	if KubeConfig != "" {
+		applyArgs = append([]string{"--kubeconfig=" + KubeConfig}, applyArgs...)
+	}
+	if KubeContext != "" {
+		applyArgs = append([]string{"--context=" + KubeContext}, applyArgs...)
+	}
+	RunCmd(t, "kubectl", applyArgs...)
+}
+
+// koResolve returns the contents of manifest with ko:// image references
+// replaced by digest-pinned images. imageUser sets the image USER when
+// building a reference that is not already cached.
+func koResolve(t *testing.T, manifest, imageUser string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("reading manifest %s: %v", manifest, err)
+	}
+	return sharedKoImages(t).rewriteManifest(t, raw, imageUser)
+}
+
+// ResolveFixtureImage resolves importPath through the fixture image cache and
+// returns its digest-pinned image reference.
+func ResolveFixtureImage(t *testing.T, importPath string) string {
+	t.Helper()
+	return sharedKoImages(t).resolve(t, importPath, "")
 }
