@@ -43,6 +43,7 @@ import (
 // retry commits both; it gets none after that, and another worker on the node
 // never gets one.
 func TestMintWorkerActorCertificateAfterWorkerRelease(t *testing.T) {
+	t.Parallel()
 	// The worker is the one WireTestAssignment names, so an async or sync suspend
 	// reaches the workflow's fake atelet on its node.
 	wa := controlapi.WireTestAssignment()

@@ -24,6 +24,7 @@ import (
 )
 
 func TestWorkloadSpecFromActorTemplate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		template *ateapi.ActorTemplate
@@ -335,6 +336,7 @@ func TestWorkloadSpecFromActorTemplate(t *testing.T) {
 }
 
 func TestWorkloadSpecFromActorTemplatePropagatesWakeupProbe(t *testing.T) {
+	t.Parallel()
 	got, err := workloadSpecFromActorTemplate(&ateapi.ActorTemplate{
 		Metadata: &ateapi.ResourceMetadata{Atespace: "agent-ns", Name: "tmpl-wakeup-probe"},
 		Containers: []*ateapi.Container{
@@ -378,6 +380,7 @@ func TestWorkloadSpecFromActorTemplatePropagatesWakeupProbe(t *testing.T) {
 }
 
 func TestAppendExternalVolumes(t *testing.T) {
+	t.Parallel()
 	template := &ateapi.ActorTemplate{
 		Containers: []*ateapi.Container{
 			{
@@ -478,6 +481,7 @@ func TestAppendExternalVolumes(t *testing.T) {
 }
 
 func TestWorkloadSpecFromActorTemplatePropagatesSecurityContext(t *testing.T) {
+	t.Parallel()
 	got, err := workloadSpecFromActorTemplate(&ateapi.ActorTemplate{
 		Metadata: &ateapi.ResourceMetadata{Atespace: "agent-ns", Name: "tmpl-caps"},
 		Containers: []*ateapi.Container{
@@ -536,6 +540,7 @@ func TestWorkloadSpecFromActorTemplatePropagatesSecurityContext(t *testing.T) {
 }
 
 func TestToAteletResources(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   *ateapi.ResourceRequirements
@@ -583,6 +588,7 @@ func TestToAteletResources(t *testing.T) {
 // literal leaves every test in the repository green while limits never leave
 // ate-api-server.
 func TestWorkloadSpecFromActorTemplatePropagatesResources(t *testing.T) {
+	t.Parallel()
 	got, err := workloadSpecFromActorTemplate(&ateapi.ActorTemplate{
 		Metadata: &ateapi.ResourceMetadata{Atespace: "agent-ns", Name: "tmpl-limits"},
 		Containers: []*ateapi.Container{

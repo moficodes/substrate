@@ -59,6 +59,7 @@ func (f *fakeStorageClassLister) Get(name string) (*storagev1.StorageClass, erro
 var _ storagev1listers.StorageClassLister = (*fakeStorageClassLister)(nil)
 
 func TestActorVolumesStorageClassErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	tmpl := &ateapi.ActorTemplate{
 		Volumes: []*ateapi.Volume{{
@@ -116,6 +117,7 @@ func TestActorVolumesStorageClassErrors(t *testing.T) {
 }
 
 func TestInitialActorVolumes(t *testing.T) {
+	t.Parallel()
 	tmpl := &ateapi.ActorTemplate{
 		Volumes: []*ateapi.Volume{
 			{
@@ -173,6 +175,7 @@ func TestInitialActorVolumes(t *testing.T) {
 }
 
 func TestCreateActorVolumes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	standardTmpl := &ateapi.ActorTemplate{
@@ -343,6 +346,7 @@ func (emptyIDVolumePlugin) CreateVolume(context.Context, volume.CreateVolumeRequ
 }
 
 func TestCreateActorVolumesRejectsEmptyPluginID(t *testing.T) {
+	t.Parallel()
 	tmpl := &ateapi.ActorTemplate{
 		Volumes: []*ateapi.Volume{{
 			Name:     "data-vol",
@@ -378,6 +382,7 @@ func (t *trackingVolumePlugin) DeleteVolume(ctx context.Context, volumeID string
 }
 
 func TestDeleteActorVolumes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	tests := []struct {
@@ -461,6 +466,7 @@ func (m *mockDetachVolumePlugin) DetachVolume(ctx context.Context, volumeID, nod
 }
 
 func TestDetachActorVolumes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	tests := []struct {

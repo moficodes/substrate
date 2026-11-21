@@ -128,6 +128,7 @@ func updateFrom(observed *ateapi.Worker, mutate func(*ateapi.Worker)) *ateapi.Wo
 // The assignments are a subresource, so this RPC is the only way to read them.
 // It also pins the identity the store gives each one.
 func TestListWorkerAssignments(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -160,6 +161,7 @@ func TestListWorkerAssignments(t *testing.T) {
 // An absent Worker is NOT_FOUND rather than an empty page, which a caller
 // cannot tell from a Worker hosting nothing.
 func TestListWorkerAssignments_AbsentWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -175,6 +177,7 @@ func TestListWorkerAssignments_AbsentWorker(t *testing.T) {
 // cannot move it. An update that tries is ignored rather than refused, as it is
 // for anything else a request carries in status.
 func TestUpdateWorker_CannotChangeCapacity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seeded := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -194,6 +197,7 @@ func TestUpdateWorker_CannotChangeCapacity(t *testing.T) {
 }
 
 func TestGetWorker_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -221,6 +225,7 @@ func TestGetWorker_Errors(t *testing.T) {
 }
 
 func TestCreateWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 
@@ -251,6 +256,7 @@ func TestCreateWorker(t *testing.T) {
 // status is output-only, so a request that carries one has it replaced rather
 // than rejected.
 func TestCreateWorker_IgnoresRequestStatus(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -268,6 +274,7 @@ func TestCreateWorker_IgnoresRequestStatus(t *testing.T) {
 }
 
 func TestCreateWorker_AlreadyExists(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -279,6 +286,7 @@ func TestCreateWorker_AlreadyExists(t *testing.T) {
 }
 
 func TestCreateWorker_InvalidArgument(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -311,6 +319,7 @@ func TestCreateWorker_InvalidArgument(t *testing.T) {
 }
 
 func TestUpdateWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seeded := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -339,6 +348,7 @@ func TestUpdateWorker(t *testing.T) {
 // unset is cleared. Immutable fields are the exception: dropping one of those
 // is an error rather than a clear, which TestUpdateWorker_Errors covers.
 func TestUpdateWorker_OmittedMutableFieldIsCleared(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	labelled := validWorker(apiWorkerName)
@@ -362,6 +372,7 @@ func TestUpdateWorker_OmittedMutableFieldIsCleared(t *testing.T) {
 // carries. That is what protects the in-process Actor binding, which lives
 // under status and is written by the actor workflows rather than over the API.
 func TestUpdateWorker_LeavesStatusAlone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -384,6 +395,7 @@ func TestUpdateWorker_LeavesStatusAlone(t *testing.T) {
 }
 
 func TestUpdateWorker_Preconditions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seeded := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -436,6 +448,7 @@ func TestUpdateWorker_Preconditions(t *testing.T) {
 }
 
 func TestUpdateWorker_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seeded := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -481,6 +494,7 @@ func TestUpdateWorker_Errors(t *testing.T) {
 // A draining worker can still have its labels updated; only its status is
 // frozen.
 func TestUpdateWorker_DrainingWorkerKeepsLabelsMutable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -504,6 +518,7 @@ func TestUpdateWorker_DrainingWorkerKeepsLabelsMutable(t *testing.T) {
 }
 
 func TestDeleteWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seeded := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -534,6 +549,7 @@ func TestDeleteWorker(t *testing.T) {
 // idempotence, like the worker-pod syncer, opt into it by treating NOT_FOUND as
 // success.
 func TestDeleteWorker_Absent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -544,6 +560,7 @@ func TestDeleteWorker_Absent(t *testing.T) {
 }
 
 func TestDeleteWorker_Preconditions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seeded := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -587,6 +604,7 @@ func TestDeleteWorker_Preconditions(t *testing.T) {
 }
 
 func TestDrainWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -616,6 +634,7 @@ func TestDrainWorker(t *testing.T) {
 // Drain deliberately leaves the bound Actor alone: it stops the scheduler
 // routing new Actors here, it does not evict the one already running.
 func TestDrainWorker_KeepsAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -631,6 +650,7 @@ func TestDrainWorker_KeepsAssignment(t *testing.T) {
 }
 
 func TestDrainWorker_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -658,6 +678,7 @@ func TestDrainWorker_Errors(t *testing.T) {
 // A repeated mark is a no-op and must not bump the version: the syncer re-drives
 // it on every pod event.
 func TestMarkWorkerAvailability(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 	created, err := svc.CreateWorker(ctx, &ateapi.CreateWorkerRequest{Worker: validWorker(apiWorkerName)})
@@ -704,6 +725,7 @@ func TestMarkWorkerAvailability(t *testing.T) {
 
 // Marking leaves the bound Actor alone, as draining does.
 func TestMarkWorkerUnavailable_KeepsAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -721,6 +743,7 @@ func TestMarkWorkerUnavailable_KeepsAssignment(t *testing.T) {
 // DRAINING is final: marking a draining Worker either way is refused and
 // leaves it as it is.
 func TestMarkWorker_Draining(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, persistence := newWorkerAPIService(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -748,6 +771,7 @@ func TestMarkWorker_Draining(t *testing.T) {
 }
 
 func TestMarkWorker_Errors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -780,6 +804,7 @@ func TestMarkWorker_Errors(t *testing.T) {
 // every write path shares. It moved up from the store contract when the store
 // stopped enforcing immutability itself.
 func TestServiceImplUpdateWorker_ImmutableFields(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
@@ -828,6 +853,7 @@ func TestServiceImplUpdateWorker_ImmutableFields(t *testing.T) {
 // releasing validate the Actor they write, as UpdateActor does, and that a
 // rejected write changes neither the Actor nor the assignment.
 func TestServiceImplAssignmentWrites_ValidateActor(t *testing.T) {
+	t.Parallel()
 	// invalid names a worker but none of the fields an assignment requires.
 	invalid := &ateapi.WorkerAssignment{Worker: &ateapi.ObjectRef{Name: apiWorkerName}}
 	for _, tc := range []struct {
@@ -899,6 +925,7 @@ func TestServiceImplAssignmentWrites_ValidateActor(t *testing.T) {
 // rejected: the fields are documented as ignored on input, so even garbage in
 // them must not fail validation.
 func TestCreateWorker_IgnoresRequestMetadataServerFields(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 
@@ -922,6 +949,7 @@ func TestCreateWorker_IgnoresRequestMetadataServerFields(t *testing.T) {
 // default. A Worker that reports its own keeps it; one that does not is worth
 // one Actor, which is what a Worker was before it could report.
 func TestCreateWorker_HoldsNoCapacityUntilReported(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, _ := newWorkerAPIService(t)
 

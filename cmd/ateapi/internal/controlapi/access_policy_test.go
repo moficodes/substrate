@@ -30,6 +30,7 @@ import (
 )
 
 func TestAccessPolicy_GlobalAndAtespaceGovernance(t *testing.T) {
+	t.Parallel()
 	persistence := storetest.SetupPostgresPersistence(t)
 	ctx := context.Background()
 

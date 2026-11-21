@@ -129,6 +129,7 @@ func seriesCounts(sum metricdata.Sum[int64]) map[series]int64 {
 // TestWorkerCountTally covers the tally, including two pools that share a name in
 // different namespaces: a WorkerPool is namespaced, so those must stay two series.
 func TestWorkerCountTally(t *testing.T) {
+	t.Parallel()
 	workers := func() ([]*ateapi.Worker, error) {
 		return []*ateapi.Worker{
 			worker("ns-1", "pool-a", "gvisor", 0, 1),
@@ -174,6 +175,7 @@ func TestWorkerCountTally(t *testing.T) {
 // TestWorkerCountSkipsWhenCacheNotReady asserts the callback emits nothing while
 // the cache is warming up, so we never publish misleading zero-valued points.
 func TestWorkerCountSkipsWhenCacheNotReady(t *testing.T) {
+	t.Parallel()
 	notReady := func() ([]*ateapi.Worker, error) {
 		return nil, context.DeadlineExceeded
 	}
@@ -240,6 +242,7 @@ func attrString(dp metricdata.HistogramDataPoint[float64], k attribute.Key) (str
 }
 
 func TestLifecycleOpDurationShape(t *testing.T) {
+	t.Parallel()
 	inst, reader := newTestInstruments(t)
 
 	actor := &ateapi.Actor{
@@ -289,6 +292,7 @@ func TestLifecycleOpDurationShape(t *testing.T) {
 // series would be indistinguishable from a real one. The unassigned actor also
 // pins the pool pair: a failure before the assign step emits neither key.
 func TestLifecycleOpAttrsOmitsUnknownScope(t *testing.T) {
+	t.Parallel()
 	actor := &ateapi.Actor{ActorTemplate: &ateapi.ObjectRef{Atespace: "ate-agents", Name: "support-agent"}}
 	for _, kv := range lifecycleOpAttrs(actor, "", "") {
 		switch kv.Key {
@@ -303,6 +307,7 @@ func TestLifecycleOpAttrsOmitsUnknownScope(t *testing.T) {
 // holds no actor, so the template keys are omitted, as on a failed delete,
 // rather than recorded as the empty string.
 func TestLifecycleOpAttrsOmitsTemplateBeforeLoad(t *testing.T) {
+	t.Parallel()
 	if got := lifecycleOpAttrs(nil, "", ""); len(got) != 0 {
 		t.Errorf("lifecycleOpAttrs(nil actor) = %v, want no attributes", got)
 	}
@@ -312,6 +317,7 @@ func TestLifecycleOpAttrsOmitsTemplateBeforeLoad(t *testing.T) {
 // each gRPC failure maps onto its status-code string; the absence of error.type is
 // the success signal, so there is no separate failure counter.
 func TestRecordLifecycleOp_OutcomeClassification(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		op            string
@@ -355,6 +361,7 @@ func TestRecordLifecycleOp_OutcomeClassification(t *testing.T) {
 // the pool pair only when a worker was assigned and error.type only for the error
 // outcome, so no_capacity (a capacity signal) carries neither.
 func TestSchedulerAssignmentShapeAndOutcomes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		outcome       string
@@ -422,6 +429,7 @@ func workerPool(namespace, name string, class atev1.SandboxClass) *atev1.WorkerP
 // only state has no workers, and a pool with no workers at all, both report 0
 // rather than an absent series. Empty pool class defaults to gvisor.
 func TestWorkerCountSeedsZeroForKnownPools(t *testing.T) {
+	t.Parallel()
 	pools := func(labels.Selector) ([]*atev1.WorkerPool, error) {
 		return []*atev1.WorkerPool{
 			workerPool("ns-1", "pool-a", ""),
@@ -454,6 +462,7 @@ func TestWorkerCountSeedsZeroForKnownPools(t *testing.T) {
 // scheduler puts no actor on them, thus the pool's own series stays at 0 and
 // an idle==0 alert on it still fires.
 func TestWorkerCountEmptyClassWorker(t *testing.T) {
+	t.Parallel()
 	const (
 		gvisor  = string(atev1.SandboxClassGvisor)
 		microvm = string(atev1.SandboxClassMicroVM)
@@ -515,6 +524,7 @@ func TestWorkerCountEmptyClassWorker(t *testing.T) {
 }
 
 func TestWorkerState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		state     ateapi.WorkerState
@@ -548,6 +558,7 @@ func TestWorkerState(t *testing.T) {
 // TestWorkerCountSumsToPool checks that each worker lands in exactly one
 // state, so the sum over the states stays the size of the pool.
 func TestWorkerCountSumsToPool(t *testing.T) {
+	t.Parallel()
 	draining := worker("ns-1", "pool-a", "gvisor", 2, 4)
 	draining.Status.State = ateapi.WorkerState_WORKER_STATE_DRAINING
 	unreported := worker("ns-1", "pool-a", "gvisor", 0, 0)

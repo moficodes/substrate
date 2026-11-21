@@ -81,6 +81,7 @@ func mustParseSnapshotURI(t *testing.T, uri string) resources.SnapshotURI {
 // a copy of the actor's external snapshot, not the actor's own, recording where
 // that copy came from, and leaves the actor's snapshot alone.
 func TestTagActorSnapshot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -125,6 +126,7 @@ func TestTagActorSnapshot(t *testing.T) {
 }
 
 func TestTagActorSnapshot_ActorRepointedToAnotherTemplate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	builtOn := seedSubstrateTemplate(t, ctx, persistence, "tmpl-a")
@@ -162,6 +164,7 @@ func TestTagActorSnapshot_ActorRepointedToAnotherTemplate(t *testing.T) {
 // template whose stored location breaks the segment rules fails with
 // FailedPrecondition.
 func TestTagActorSnapshot_LocationOutsideSegmentRules(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template, err := persistence.CreateActorTemplate(ctx, &ateapi.ActorTemplate{
@@ -189,6 +192,7 @@ func TestTagActorSnapshot_LocationOutsideSegmentRules(t *testing.T) {
 // TestTagActorSnapshot_Preconditions verifies what a tag may be taken from:
 // a suspended actor's finished external snapshot, and nothing else.
 func TestTagActorSnapshot_Preconditions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		state        ateapi.ActorState
@@ -263,6 +267,7 @@ func TestTagActorSnapshot_Preconditions(t *testing.T) {
 // accepted when no snapshot is newer than the actor's external one, even when
 // that external snapshot is not at last_assigned_generation.
 func TestTagActorSnapshot_TagsNewestExternalSnapshot(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// lastAssigned is the actor's last_assigned_generation. The external
@@ -322,6 +327,7 @@ func TestTagActorSnapshot_TagsNewestExternalSnapshot(t *testing.T) {
 // leaves the actor as it was. A create that cannot succeed fails before the
 // upload.
 func TestTagActorSnapshot_PromotesLocalSnapshot(t *testing.T) {
+	t.Parallel()
 	// reported is the state atelet answers with once it made snap durable.
 	reported := func(snap *ateapi.Snapshot) *ateletpb.ActorSnapshotState {
 		report := &ateletpb.SnapshotReport{Snapshot: &ateletpb.Snapshot{
@@ -616,6 +622,7 @@ func TestTagActorSnapshot_PromotesLocalSnapshot(t *testing.T) {
 // it stranded are reachable; the name it holds is taken until the tag is
 // deleted, and only then does a create under that name run again.
 func TestTagActorSnapshot_RecreateAfterCopyFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -718,6 +725,7 @@ func (s *recordTagErrorStore) UpdateTag(ctx context.Context, tagRef resources.Ta
 // copied until the snapshot's URI is recorded. Deleting that tag frees the
 // name without touching object storage, and the create then runs again.
 func TestTagActorSnapshot_RecreateAfterRecordFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -769,6 +777,7 @@ func TestTagActorSnapshot_RecreateAfterRecordFailure(t *testing.T) {
 // TestTagActorSnapshot_RacesDelete verifies that deleting a tag that's
 // still being created is aborted.
 func TestTagActorSnapshot_RacesDelete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -827,6 +836,7 @@ func TestTagActorSnapshot_RacesDelete(t *testing.T) {
 // is refused and the pending copy is left exactly as it was, rather than a
 // second source writing into the prefix the first one is named after.
 func TestTagActorSnapshot_NameTakenByAnotherActor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -879,6 +889,7 @@ func TestTagActorSnapshot_NameTakenByAnotherActor(t *testing.T) {
 // external snapshot the tag owns before dropping the row that names it, and
 // that a failure to collect leaves the row intact so a retry can finish the job.
 func TestDeleteTag_ReleasesExternalSnapshot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -939,6 +950,7 @@ func TestDeleteTag_ReleasesExternalSnapshot(t *testing.T) {
 // names the prefix the copy was writing into, and it is the only handle left on
 // those objects.
 func TestDeleteTag_ReleasesPendingSnapshot(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -982,6 +994,7 @@ func TestDeleteTag_ReleasesPendingSnapshot(t *testing.T) {
 // NotFound rather than a silent success: the client asked to collect a snapshot
 // no row names.
 func TestDeleteTag_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -1004,6 +1017,7 @@ func mustReservedTagSnapshotURI(t *testing.T, tag *ateapi.Tag) resources.Snapsho
 }
 
 func TestDeleteTag_Preconditions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")

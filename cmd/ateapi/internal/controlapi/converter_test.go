@@ -29,6 +29,7 @@ import (
 // TestFidelityToAtelet pins the level-by-level mapping onto the atelet enum:
 // nothing is promoted, and an unset fidelity stays unset so atelet rejects it.
 func TestFidelityToAtelet(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		in       ateapi.SnapshotFidelity
@@ -74,6 +75,7 @@ func TestFidelityToAtelet(t *testing.T) {
 // TestFidelityFromAtelet verifies each atelet fidelity maps back to the same
 // public level, and anything else to UNSPECIFIED.
 func TestFidelityFromAtelet(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   ateletpb.SnapshotFidelity
@@ -95,6 +97,7 @@ func TestFidelityFromAtelet(t *testing.T) {
 }
 
 func TestSnapshotReportFromAtelet(t *testing.T) {
+	t.Parallel()
 	committed := timestamppb.New(time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC))
 	uploaded := timestamppb.New(time.Date(2026, 10, 14, 12, 5, 0, 0, time.UTC))
 	tests := []struct {

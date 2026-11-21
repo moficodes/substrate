@@ -82,6 +82,7 @@ func mustGetWorker(t *testing.T, s *Server, name string) *ateapi.Worker {
 // worker process that never registers changes nothing the control plane acts
 // on.
 func TestAcquireWorkerEpoch(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -107,6 +108,7 @@ func TestAcquireWorkerEpoch(t *testing.T) {
 }
 
 func TestAcquireWorkerEpoch_NewWorker(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -123,6 +125,7 @@ func TestAcquireWorkerEpoch_NewWorker(t *testing.T) {
 }
 
 func TestAcquireWorkerEpoch_Errors(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -158,6 +161,7 @@ func TestAcquireWorkerEpoch_Errors(t *testing.T) {
 // registers with it, which activates the epoch and replaces what the previous
 // process reported.
 func TestRegisterWorker(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -203,6 +207,7 @@ func TestRegisterWorker(t *testing.T) {
 // registers. Every Worker here starts with testEpoch registered and two more
 // acquired.
 func TestRegisterWorker_Epochs(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -306,6 +311,7 @@ func TestRegisterWorker_Epochs(t *testing.T) {
 // node is reported as absent rather than forbidden, so a caller learns nothing
 // about what runs elsewhere.
 func TestRegisterWorker_OtherNodeIsNotFound(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -327,6 +333,7 @@ func TestRegisterWorker_OtherNodeIsNotFound(t *testing.T) {
 }
 
 func TestRegisterWorker_Errors(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -367,6 +374,7 @@ func TestRegisterWorker_Errors(t *testing.T) {
 // ceiling is the case that matters: placement asks whether allocated is below
 // capacity, so the Worker would take no Actor ever again.
 func TestRegisterWorker_RejectsNonsense(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -404,6 +412,7 @@ func TestRegisterWorker_RejectsNonsense(t *testing.T) {
 // process reported first and recorded only when they differ from what is
 // stored.
 func TestSetWorkerSandboxRuntimes(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -539,6 +548,7 @@ func TestSetWorkerSandboxRuntimes(t *testing.T) {
 // attributes in another order are the same runtime, so they are stored sorted
 // by key and a reordered repeat writes nothing.
 func TestSetWorkerSandboxRuntimes_SortsAttributes(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)
@@ -576,6 +586,7 @@ func TestSetWorkerSandboxRuntimes_SortsAttributes(t *testing.T) {
 }
 
 func TestSetWorkerSandboxRuntimes_Errors(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, "", nil)

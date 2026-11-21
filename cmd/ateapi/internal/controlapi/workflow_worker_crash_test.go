@@ -29,6 +29,7 @@ import (
 )
 
 func TestCrashActorReportedByWorker(t *testing.T) {
+	t.Parallel()
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 
 	tests := []struct {

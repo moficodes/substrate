@@ -109,6 +109,7 @@ func newTestCAPool(t *testing.T) *localca.ConcretePool {
 }
 
 func TestMintWorkerActorCertificate(t *testing.T) {
+	t.Parallel()
 	st, actor := newFakeStoreWithActor("team-a", "my-actor", "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21")
 	caPool := newTestCAPool(t)
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, caPool, "", nil)
@@ -162,6 +163,7 @@ func TestMintWorkerActorCertificate(t *testing.T) {
 }
 
 func TestMintWorkerActorCertificate_Errors(t *testing.T) {
+	t.Parallel()
 	st, actor := newFakeStoreWithActor("team-a", "my-actor", "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21")
 	caPool := newTestCAPool(t)
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, caPool, "", nil)

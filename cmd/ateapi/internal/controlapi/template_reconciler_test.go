@@ -396,6 +396,7 @@ func newTestTemplateReconciler(persistence templateReconcilerStore, control gold
 }
 
 func TestGoldenSnapshotWarmupFor(t *testing.T) {
+	t.Parallel()
 	probe := &ateapi.WakeupProbe{}
 	tests := []struct {
 		name       string
@@ -416,6 +417,7 @@ func TestGoldenSnapshotWarmupFor(t *testing.T) {
 }
 
 func TestReconcileOne(t *testing.T) {
+	t.Parallel()
 	goldenSnapshot := "gs://bucket/root/atespaces/ns/actors/" + someActorUID + "/snapshots/snap-1"
 	tests := []struct {
 		name     string
@@ -889,6 +891,7 @@ func TestReconcileOne_GoldenEgressPolicyRecovery(t *testing.T) {
 // template UID so recreated templates with the same name never collide, and
 // lives in the template's atespace under ordinary tenant policies.
 func TestReconcileOne_GoldenActorRequests(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newFakeTemplateStore(testTemplate())
 
@@ -928,6 +931,7 @@ func TestReconcileOne_GoldenActorRequests(t *testing.T) {
 }
 
 func TestCheckpoint_TerminalStateErrors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	for _, seed := range []struct {
@@ -957,6 +961,7 @@ func TestCheckpoint_TerminalStateErrors(t *testing.T) {
 }
 
 func TestTruncateUTF8(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		s    string
@@ -1014,6 +1019,7 @@ func TestTruncateUTF8(t *testing.T) {
 // stored cut to error_message's maxLength, as valid UTF-8 that still passes
 // validation.
 func TestFail_TruncatesErrorMessage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newFakeTemplateStore(testTemplate())
 	r := newTestTemplateReconciler(st, &fakeGoldenControl{})
@@ -1043,6 +1049,7 @@ func TestFail_TruncatesErrorMessage(t *testing.T) {
 // write with the observed template's uid and version: once a concurrent write
 // advances the stored version, the stale observation is rejected.
 func TestCheckpoint_StaleObservationConflicts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newFakeTemplateStore(testTemplate())
 	r := newTestTemplateReconciler(st, &fakeGoldenControl{})
@@ -1078,6 +1085,7 @@ func drainQueue(r *ActorTemplateReconciler) []resources.ActorTemplateRef {
 }
 
 func TestResync_QueuesOnlyActionableTemplates(t *testing.T) {
+	t.Parallel()
 
 	tests := []struct {
 		name       string
@@ -1120,6 +1128,7 @@ func TestResync_QueuesOnlyActionableTemplates(t *testing.T) {
 }
 
 func TestResync_FollowsPagination(t *testing.T) {
+	t.Parallel()
 	st := newFakeTemplateStore(
 		testTemplate(func(tmpl *ateapi.ActorTemplate) { tmpl.Metadata.Name = "tmpl-a" }),
 		testTemplate(func(tmpl *ateapi.ActorTemplate) { tmpl.Metadata.Name = "tmpl-b" }),
@@ -1136,6 +1145,7 @@ func TestResync_FollowsPagination(t *testing.T) {
 }
 
 func TestReconcileOne_GoldenTagRecovery(t *testing.T) {
+	t.Parallel()
 	ref := &ateapi.ObjectRef{Atespace: testTemplateRef.Atespace, Name: testTemplateUID}
 	completed := &ateapi.Tag{
 		Metadata:    &ateapi.ResourceMetadata{Atespace: ref.Atespace, Name: ref.Name},
@@ -1220,6 +1230,7 @@ func TestReconcileOne_GoldenTagRecovery(t *testing.T) {
 }
 
 func TestReconcileOne_GoldenTagConflict(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		templateUID string

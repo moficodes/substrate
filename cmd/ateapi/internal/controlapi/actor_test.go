@@ -38,6 +38,7 @@ import (
 )
 
 func TestValidateActorStatusCrash(t *testing.T) {
+	t.Parallel()
 	crashPath := field.NewPath("status", "crash")
 	withCrash := func(mutate ...func(*ateapi.ActorCrash)) func(*ateapi.Actor) {
 		return withActorStatus(func(s *ateapi.ActorStatus) {
@@ -121,6 +122,7 @@ func TestValidateActorStatusCrash(t *testing.T) {
 }
 
 func TestUpdateActor(t *testing.T) {
+	t.Parallel()
 	const templateNS, templateName = "ns1", "tmpl1"
 
 	tests := []struct {
@@ -267,6 +269,7 @@ func TestUpdateActor(t *testing.T) {
 // resolve, and the replacement's sandbox config, volumes, and volume mounts
 // must match the old template's.
 func TestUpdateActor_RepointTemplate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -640,6 +643,7 @@ func TestUpdateActor_RepointTemplateStorageLocation(t *testing.T) {
 // per-container mount comparison applied when an actor is repointed at a
 // replacement template.
 func TestValidateTemplateVolumesUnchanged(t *testing.T) {
+	t.Parallel()
 	dataVolume := &ateapi.Volume{Name: "data", DurableDir: &ateapi.DurableDirVolumeSource{}}
 	scratchVolume := &ateapi.Volume{Name: "scratch", DurableDir: &ateapi.DurableDirVolumeSource{}}
 	template := func(volumes []*ateapi.Volume, containers ...*ateapi.Container) *ateapi.ActorTemplate {
@@ -742,6 +746,7 @@ func TestValidateTemplateVolumesUnchanged(t *testing.T) {
 // TestUpdateActor_DeleteRecreateRace checks that an update is not applied
 // if an actor was deleted and recreated during the update operation.
 func TestUpdateActor_DeleteRecreateRace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -823,6 +828,7 @@ func TestUpdateActor_DeleteRecreateRace(t *testing.T) {
 // the whole actor, not a single field, so the server cannot know the two
 // writes commute: it reports the conflict and leaves reconciling to the client.
 func TestUpdateActor_ConcurrentDisjointUpdates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -971,6 +977,7 @@ func TestCreateActor_DoesNotInheritGoldenEgressPolicy(t *testing.T) {
 }
 
 func TestCreateActor_GoldenTagDefault(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"default", "explicit tag", "own snapshot", "missing", "pending", "wrong template", "data scope"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := t.Context()

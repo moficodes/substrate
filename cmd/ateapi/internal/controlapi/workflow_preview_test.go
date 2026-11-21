@@ -27,6 +27,7 @@ import (
 // begins with preview.ContextWithOptIn, so a request's preview opt-out does
 // not limit the system state the workflow writes.
 func TestWorkflowsOptInToPreview(t *testing.T) {
+	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

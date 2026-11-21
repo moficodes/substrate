@@ -26,6 +26,7 @@ import (
 )
 
 func TestFindSnapshotByGenerationAndSnapshotAtLatestGeneration(t *testing.T) {
+	t.Parallel()
 	if got := snapshotAtLatestGeneration(nil); got != nil {
 		t.Errorf("snapshotAtLatestGeneration(nil) = %v, want nil", got)
 	}
@@ -52,6 +53,7 @@ func TestFindSnapshotByGenerationAndSnapshotAtLatestGeneration(t *testing.T) {
 }
 
 func TestFindLatestDurableAndLocalSnapshots(t *testing.T) {
+	t.Parallel()
 	if snap := findLatestDurableSnapshot(nil, ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED); snap != nil {
 		t.Errorf("findLatestDurableSnapshot(nil) = %v, want nil", snap)
 	}
@@ -91,6 +93,7 @@ func TestFindLatestDurableAndLocalSnapshots(t *testing.T) {
 }
 
 func TestSnapshotPruningHelpers(t *testing.T) {
+	t.Parallel()
 	// Should not panic on nil status.
 	clearLocalSnapshots(nil)
 	pruneSnapshots(nil, nil)
@@ -211,6 +214,7 @@ func TestSnapshotPruningHelpers(t *testing.T) {
 // node-local, whether or not atelet has uploaded it. A latest snapshot with
 // only a durable copy, or a local one not captured yet, does not count.
 func TestLatestSnapshotIsLocal(t *testing.T) {
+	t.Parallel()
 	local := func(gen int32) *ateapi.Snapshot {
 		return newPausedSnapshot(t, gen, ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY, "", "local", "node-1")
 	}
@@ -245,6 +249,7 @@ func TestLatestSnapshotIsLocal(t *testing.T) {
 }
 
 func TestTagDurableSnapshotURI(t *testing.T) {
+	t.Parallel()
 	if got := tagDurableSnapshotURI(nil, ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_UNSPECIFIED); got != "" {
 		t.Errorf("tagDurableSnapshotURI(nil) = %q, want empty", got)
 	}

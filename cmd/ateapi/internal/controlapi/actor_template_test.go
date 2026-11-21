@@ -55,6 +55,7 @@ func validActorTemplate(mutations ...func(*ateapi.ActorTemplate)) *ateapi.ActorT
 // TestCreateActorTemplate covers the atespace precondition: creation fails
 // while the atespace is missing, and succeeds once the atespace exists.
 func TestCreateActorTemplate(t *testing.T) {
+	t.Parallel()
 	persistence := newTestPersistence(t)
 	impl := newServiceImpl(persistence, nil)
 	impl.clusterSnapshotLocation = "gs://cluster-bucket/"
@@ -151,6 +152,7 @@ func TestCreateActorTemplate_RequiresSnapshotLocation(t *testing.T) {
 // status. The store persists whatever the handler hands it, so the handler is
 // the only guard.
 func TestCreateActorTemplateIgnoresServerOwnedFields(t *testing.T) {
+	t.Parallel()
 	persistence := newTestPersistence(t)
 	impl := newServiceImpl(persistence, nil)
 	impl.clusterSnapshotLocation = "gs://cluster-bucket/"
@@ -198,6 +200,7 @@ func TestCreateActorTemplateIgnoresServerOwnedFields(t *testing.T) {
 // TestCreateActorTemplateDefaultsOmittedSnapshotConfig pins that
 // snapshot_config is optional: create fills an omitted one with every default.
 func TestCreateActorTemplateDefaultsOmittedSnapshotConfig(t *testing.T) {
+	t.Parallel()
 	persistence := newTestPersistence(t)
 	impl := newServiceImpl(persistence, nil)
 	impl.clusterSnapshotLocation = "gs://cluster-bucket/"
@@ -223,6 +226,7 @@ func TestCreateActorTemplateDefaultsOmittedSnapshotConfig(t *testing.T) {
 }
 
 func TestDeleteActorTemplate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		actorDeleted bool
@@ -403,6 +407,7 @@ func seedSubstrateTemplate(t *testing.T, ctx context.Context, persistence store.
 // TestResolveActorTemplate verifies the resolver reads the substrate resource
 // the actor's actor_template reference names.
 func TestResolveActorTemplate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	stored := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -431,6 +436,7 @@ func TestResolveActorTemplate(t *testing.T) {
 // naming no template at all surface errActorTemplateNotFound, so callers like
 // delete can tolerate them.
 func TestResolveActorTemplate_NotFound(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	stored := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -467,6 +473,7 @@ func TestResolveActorTemplate_NotFound(t *testing.T) {
 // bumps the version, and that an update or mark for deletion that changes
 // metadata is rejected.
 func TestUpdateActorTemplateMetadata(t *testing.T) {
+	t.Parallel()
 	persistence := newTestPersistence(t)
 	impl := newServiceImpl(persistence, nil)
 	ctx := context.Background()

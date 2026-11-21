@@ -69,6 +69,7 @@ func suspendRequest(actorUID string) *ateapi.RequestActorSuspendRequest {
 // The point of the whole path: a worker asks, and the control plane runs the
 // same suspend a client would have asked for.
 func TestRequestActorSuspend(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	seedReportedWorker(t, st, testNode, &ateapi.WorkerResources{Actors: 1})
@@ -103,6 +104,7 @@ func TestRequestActorSuspend(t *testing.T) {
 // Each of these is reported as absent rather than forbidden, so a caller learns
 // nothing about actors that are not its own.
 func TestRequestActorSuspend_OnlyForHostedActors(t *testing.T) {
+	t.Parallel()
 	const otherWorker = "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21"
 
 	tests := []struct {
@@ -146,6 +148,7 @@ func TestRequestActorSuspend_OnlyForHostedActors(t *testing.T) {
 }
 
 func TestRequestActorSuspend_Errors(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	seedReportedWorker(t, st, testNode, &ateapi.WorkerResources{Actors: 1})
@@ -212,6 +215,7 @@ func TestRequestActorSuspend_Errors(t *testing.T) {
 // request that loses a race to a resume, suspend, or delete comes back as what
 // the workflow said, not as something the worker has to interpret.
 func TestRequestActorSuspend_PassesThroughTheWorkflowsRefusal(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	seedReportedWorker(t, st, testNode, &ateapi.WorkerResources{Actors: 1})

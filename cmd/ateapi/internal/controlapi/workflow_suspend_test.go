@@ -39,6 +39,7 @@ import (
 // TestSuspendActor_CheckpointError exercises checkpoint error policy through
 // the suspend workflow, including retrying the persisted snapshot.
 func TestSuspendActor_CheckpointError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		err       error
@@ -141,6 +142,7 @@ func TestSuspendActor_CheckpointError(t *testing.T) {
 }
 
 func TestSuspendActor_MarkedSuspending_SnapshotURI(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	seedSuspendTemplate(t, ctx, persistence, &ateapi.SnapshotConfig{StorageLocation: "gs://bucket/root/"})
@@ -198,6 +200,7 @@ func TestSuspendActor_MarkedSuspending_SnapshotURI(t *testing.T) {
 // both on the wire and in the snapshot the suspend commits. Both modes mark
 // the same shape, so the retry's mode may differ from the first attempt's.
 func TestSuspendActor_MarkedSuspending_ReentryKeepsPersistedSnapshotLocation(t *testing.T) {
+	t.Parallel()
 	const firstAttempt = "gs://bucket/root/atespaces/team-a/actors/actor-uid/snapshots/first-attempt"
 	pending := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
@@ -269,6 +272,7 @@ func TestSuspendActor_MarkedSuspending_ReentryKeepsPersistedSnapshotLocation(t *
 // It never promotes a node-local snapshot: the stored record, durable copies,
 // locality, and assigned node included, is left exactly as seeded.
 func TestSuspendActorWorkflow_SuspendedReturnsAsIs(t *testing.T) {
+	t.Parallel()
 	durableURI := someActorSnapshotURI(t, "gs://snapshots", "team-a", "durable-snap")
 	withDurable := func(a *ateapi.Actor) {
 		a.Status.LastAssignedGeneration = 1
@@ -320,6 +324,7 @@ func TestSuspendActorWorkflow_SuspendedReturnsAsIs(t *testing.T) {
 // SUSPENDED is returned as it is (see TestSuspendActorWorkflow_SuspendedReturnsAsIs),
 // and everything else is rejected with FailedPrecondition and left untouched.
 func TestSuspendActor_MarkedSuspending_StateMatrix(t *testing.T) {
+	t.Parallel()
 	for _, mode := range suspendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -384,6 +389,7 @@ func newDanglingDialer() *AteletDialer {
 }
 
 func TestSuspendActor_AteletSuspended_DialFailureLeavesActorRetryable(t *testing.T) {
+	t.Parallel()
 	neverWritten := someActorSnapshotURI(t, testStorageLocation, "team-a", "never-written")
 
 	tests := []struct {
@@ -457,6 +463,7 @@ func TestSuspendActor_AteletSuspended_DialFailureLeavesActorRetryable(t *testing
 // to the actor's in-progress durable snapshot with an immediate upload, since
 // the suspend's finalize then marks that snapshot COMPLETED.
 func TestSuspendActor_AteletSuspended_WireRequest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	seedSuspendTemplate(t, ctx, persistence, &ateapi.SnapshotConfig{PreferredFidelity: ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY})
@@ -510,6 +517,7 @@ func TestSuspendActor_AteletSuspended_WireRequest(t *testing.T) {
 // nothing else can name it — unless the actor was only borrowing it from a tag,
 // in which case the tag owns those objects and the suspend must leave them be.
 func TestSuspendActor_Finalized_ReleasesReplacedSnapshot(t *testing.T) {
+	t.Parallel()
 	// The name of the snapshot the suspend has just written, in place of the
 	// one the actor was running from.
 	const snapshotName = "2026-01-01t00-00-00z-new"
@@ -595,6 +603,7 @@ func TestSuspendActor_Finalized_ReleasesReplacedSnapshot(t *testing.T) {
 // recorded from the Checkpoint state, or before the suspend from atelet's
 // report.
 func TestSuspendActor_Finalized_PauseReleasesReplacedSnapshot(t *testing.T) {
+	t.Parallel()
 	const node = "node-1"
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
@@ -681,6 +690,7 @@ func TestSuspendActor_Finalized_PauseReleasesReplacedSnapshot(t *testing.T) {
 // nothing: the next suspend releases the replaced snapshot under its own
 // location, and deleting the actor then collects the new one.
 func TestSnapshotLocationChange_LeavesNothingBehind(t *testing.T) {
+	t.Parallel()
 	const (
 		oldLocation = "gs://old-bucket/root"
 		newLocation = "gs://new-bucket/root"
@@ -748,6 +758,7 @@ func isObjectStoreErr(err error) bool {
 // actor SUSPENDING with no way to resume; it commits SUSPENDED on the new
 // snapshot instead and leaves the replaced one in storage.
 func TestSuspendActor_Finalized_CommitsDespiteObjectStoreFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -806,6 +817,7 @@ func TestSuspendActor_Finalized_CommitsDespiteObjectStoreFailure(t *testing.T) {
 // names its old snapshot, so collecting it would leave the actor pointing at
 // deleted objects.
 func TestSuspendActor_Finalized_KeepsReplacedSnapshotOnConflict(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -868,6 +880,7 @@ func (conflictingUpdateStore) UpdateActorAndRelease(context.Context, resources.A
 // worker is kept: the finalize update is pinned to the actor version it
 // checked, so it fails Aborted instead of committing SUSPENDED over the crash.
 func TestSuspendActor_Finalized_KeepsCrashFromWorkerDelete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	seedSuspendTemplate(t, ctx, persistence, &ateapi.SnapshotConfig{StorageLocation: testStorageLocation})
@@ -894,6 +907,7 @@ func TestSuspendActor_Finalized_KeepsCrashFromWorkerDelete(t *testing.T) {
 }
 
 func TestSuspendActor_Finalized_ReleasesOnlyOwnWorker(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name               string
 		assignmentAtespace string
@@ -1023,6 +1037,7 @@ var suspendModes = []struct {
 }
 
 func TestSuspendModeFromOptions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		opts *ateapi.SuspendOptions
@@ -1080,6 +1095,7 @@ type snapshotOutcome struct {
 // returned, the atelet RPC sent, the record left behind, and whether the
 // actor's worker was released.
 func TestSuspendAndPause_CharacteristicMatrix(t *testing.T) {
+	t.Parallel()
 	const node = "node-1"
 	volumes := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
 	durable := func(gen int32, state ateapi.SnapshotStorageState) *ateapi.Snapshot {
@@ -1237,6 +1253,7 @@ func TestSuspendAndPause_CharacteristicMatrix(t *testing.T) {
 // return FailedPrecondition, when the crash lands between the atelet call and
 // finalize's read.
 func TestSuspendAndPause_FinalizeWithoutAssignment(t *testing.T) {
+	t.Parallel()
 	for _, mode := range suspendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -1282,6 +1299,7 @@ func TestSuspendAndPause_FinalizeWithoutAssignment(t *testing.T) {
 // workflows validate the template's storage location in MarkSuspending before
 // writing SUSPENDING, leaving the actor RUNNING untouched.
 func TestSuspendAndPause_InvalidStorageLocationRejected(t *testing.T) {
+	t.Parallel()
 	for _, mode := range suspendModes {
 		t.Run(mode.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -1378,6 +1396,7 @@ func assertRequestNamesLatestSnapshot(t *testing.T, atelet *capturingAtelet, tmp
 // snapshot state atelet returns from Checkpoint, with the report rules. A state
 // that conflicts with the record crashes the actor.
 func TestSuspendActor_AppliesCheckpointState(t *testing.T) {
+	t.Parallel()
 	const node = "node-1"
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	pending := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING
@@ -1571,6 +1590,7 @@ func TestSuspendActor_AppliesCheckpointState(t *testing.T) {
 }
 
 func TestSuspendActor_Finalized_RecordsLocalCopyWhenKept(t *testing.T) {
+	t.Parallel()
 	const node = "node-1"
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED

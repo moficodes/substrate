@@ -87,6 +87,7 @@ func seedRunningActor(t *testing.T, ctx context.Context, persistence store.Inter
 }
 
 func TestReconcileAssignments_CrashesEarlierActors(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -132,6 +133,7 @@ func TestReconcileAssignments_CrashesEarlierActors(t *testing.T) {
 // An Actor restored on the new worker process records that process's epoch
 // when it becomes RUNNING, so it is kept.
 func TestReconcileAssignments_KeepsActorRestoredOnNewProcess(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -155,6 +157,7 @@ func TestReconcileAssignments_KeepsActorRestoredOnNewProcess(t *testing.T) {
 }
 
 func TestReconcileAssignments_AlreadyObservedWritesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 2, 2)
@@ -175,6 +178,7 @@ func TestReconcileAssignments_AlreadyObservedWritesNothing(t *testing.T) {
 // Actor depends on where the Actor stands. A released Actor no longer names
 // the Worker.
 func TestReconcileAssignments_ReleasesByActorState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		state       ateapi.ActorState
@@ -215,6 +219,7 @@ func TestReconcileAssignments_ReleasesByActorState(t *testing.T) {
 // An assignment whose Actor has an operation in progress waits for it: the rest
 // are released, but observed_epoch stays put until a pass gets the Actor too.
 func TestReconcileAssignments_WaitsForBusyActor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -288,6 +293,7 @@ func (s *hookedStore) UpdateWorker(ctx context.Context, name string, preconditio
 // An Actor bound again in the current epoch after the pass listed its earlier
 // assignment runs on the restarted worker, so it is kept.
 func TestReconcileAssignments_KeepsActorReboundSinceList(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -333,6 +339,7 @@ func TestReconcileAssignments_KeepsActorReboundSinceList(t *testing.T) {
 // observed_epoch read the Worker again: the bind came after the sweep, so it is
 // kept.
 func TestReconcileAssignments_RetriesRecordAfterConcurrentBind(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -362,6 +369,7 @@ func TestReconcileAssignments_RetriesRecordAfterConcurrentBind(t *testing.T) {
 // incarnation, whose observed_epoch the pass must not raise: the new Worker's
 // own restarts would then look already observed.
 func TestReconcileAssignments_LeavesReplacedWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -385,6 +393,7 @@ func TestReconcileAssignments_LeavesReplacedWorker(t *testing.T) {
 // A release that fails leaves observed_epoch where it was, so the next pass
 // redoes it.
 func TestReconcileAssignments_FailureKeepsObservedEpoch(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -412,6 +421,7 @@ func TestReconcileAssignments_FailureKeepsObservedEpoch(t *testing.T) {
 }
 
 func TestReconcileAssignments_WorkerGone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	mustReconcileAssignments(t, ctx, persistence)
@@ -420,6 +430,7 @@ func TestReconcileAssignments_WorkerGone(t *testing.T) {
 // Placing an Actor records no epoch: only the worker process that restores it
 // knows which epoch it runs under.
 func TestAssignWorkerAttempt_LeavesWorkerEpochUnset(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	name := testWorkerUID("pod-1")

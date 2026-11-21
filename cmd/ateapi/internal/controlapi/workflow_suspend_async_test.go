@@ -96,6 +96,7 @@ func TestSuspendActorAsync_Finalized_NodeUnknown(t *testing.T) {
 // worker is kept: the finalize update is pinned to the actor version it
 // checked, so it fails Aborted instead of committing SUSPENDED over the crash.
 func TestSuspendActorAsync_Finalized_KeepsCrashFromWorkerDelete(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newTestPersistence(t)
 	seedSuspendTemplate(t, ctx, st, nil)
@@ -121,6 +122,7 @@ func TestSuspendActorAsync_Finalized_KeepsCrashFromWorkerDelete(t *testing.T) {
 // preferred_fidelity on the local Snapshot alongside Locality, and keeps its
 // durable copy PENDING for atelet to upload in the background.
 func TestSuspendActorAsync_Finalized_RecordsFidelity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		preferred ateapi.SnapshotFidelity
@@ -279,6 +281,7 @@ func TestSuspendActorAsync_Finalized_MissingSnapshotClearsAssignment(t *testing.
 }
 
 func TestSuspendActorAsync_AteletPaused_DialFailureLeavesActorRetryable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		prevSnapshot string
@@ -345,6 +348,7 @@ func TestSuspendActorAsync_AteletPaused_DialFailureLeavesActorRetryable(t *testi
 // suspend checkpoints forward the template's PreferredFidelity to atelet, and
 // label the suspend's lifecycle-op metric with it.
 func TestSuspendActorAsync_AteletPaused_ForwardsPreferredFidelity(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		preferred ateapi.SnapshotFidelity
 		want      ateletpb.SnapshotFidelity

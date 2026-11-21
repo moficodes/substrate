@@ -38,6 +38,7 @@ func epochWorker(name string, registered, observed int64) *ateapi.Worker {
 }
 
 func TestWorkerAssignmentReconciler_QueuesUnobservedWorkers(t *testing.T) {
+	t.Parallel()
 	r := NewWorkerAssignmentReconciler(nil, noWorkers{})
 	defer r.queue.ShutDown()
 
@@ -65,6 +66,7 @@ func TestWorkerAssignmentReconciler_QueuesUnobservedWorkers(t *testing.T) {
 // A Worker another replica is releasing is left to it, and reported so it is
 // retried.
 func TestWorkerAssignmentReconciler_SkipsWorkerLeasedElsewhere(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerAPIService(t)
 	seedEpochWorker(t, ctx, persistence, 1, 1)
@@ -113,6 +115,7 @@ func startAssignmentReconciler(t *testing.T, ctx context.Context, persistence st
 // End to end: the syncer's raise is all it takes for the reconciler to hear of
 // the Worker through the cache and crash what the restart lost.
 func TestWorkerAssignmentReconciler_ReleasesRestartedWorker(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, persistence := newWorkerAPIService(t)
@@ -134,6 +137,7 @@ func TestWorkerAssignmentReconciler_ReleasesRestartedWorker(t *testing.T) {
 // A Worker leased by another replica is retried without waiting for another
 // change to it, so a replica that dies mid-release does not strand it.
 func TestWorkerAssignmentReconciler_RetriesAfterLeaseFrees(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, persistence := newWorkerAPIService(t)
@@ -157,6 +161,7 @@ func TestWorkerAssignmentReconciler_RetriesAfterLeaseFrees(t *testing.T) {
 
 // A Worker raised while no reconciler ran is released once one starts.
 func TestWorkerAssignmentReconciler_ReleasesWorkerRaisedBeforeStart(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, persistence := newWorkerAPIService(t)
