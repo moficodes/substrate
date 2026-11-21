@@ -233,3 +233,5 @@ We provide several sample applications demonstrating Agent Substrate's capabilit
 * `cmd/kubectl-ate`: A CLI tool for managing Agent Substrate resources. See its [README](docs/reference/kubectl-ate.md).
 * `cmd/benchmarking`: Synthetic workloads used by the load tests, including `glutton`, which consumes RAM, disk, and file descriptors on demand.
 * `demos/`: Sample applications demonstrating Agent Substrate capabilities.
+
+<!-- benchmark baseline control -->
