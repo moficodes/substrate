@@ -17,6 +17,7 @@ package demo
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
 	"time"
 
@@ -299,7 +300,7 @@ func setupSuspendedV1Actor(t *testing.T, prefix string) *sandboxRuntimeFixture {
 	}
 	baseConfig := newestClassDefault(t, ctx, clients, class)
 	v1 := defaultVersionFromConfig(t, baseConfig, "v1")
-	v2 := secondSandboxVersion(v1, "v2", class)
+	v2 := secondSandboxVersion(baseConfig, v1, "v2", class)
 
 	configName := "e2e-" + prefix + "-" + nsObj.Name
 	if _, err := clients.SubstrateK8s.AteV1().SandboxConfigs().Create(ctx, &atev1.SandboxConfig{
@@ -662,10 +663,22 @@ func defaultVersionFromConfig(t *testing.T, sc *atev1.SandboxConfig, name string
 }
 
 // secondSandboxVersion returns an Enabled version named name whose assets
-// produce a different sandbox_bundle_hash than v1. On gVisor it uses a second
-// gVisor release tarball; on microVM it reuses v1's cached assets plus an
-// extra entry, so the bucket needs no second kata asset set.
-func secondSandboxVersion(v1 atev1.SandboxVersionConfig, name string, class atev1.SandboxClass) atev1.SandboxVersionConfig {
+// produce a different sandbox_bundle_hash than v1. When baseConfig already
+// carries a second enabled version for this architecture (such as
+// gvisor-default, whose versions are cached during cluster setup), it reuses
+// that version's assets so parallel tests hit the local asset cache. Otherwise
+// gVisor falls back to gvisorSecondReleaseAssets, and microVM reuses v1's
+// cached assets plus an extra entry.
+func secondSandboxVersion(baseConfig *atev1.SandboxConfig, v1 atev1.SandboxVersionConfig, name string, class atev1.SandboxClass) atev1.SandboxVersionConfig {
+	for i := range baseConfig.Spec.Versions {
+		cand := &baseConfig.Spec.Versions[i]
+		if cand.Name == baseConfig.Spec.DefaultVersion || (cand.State != nil && *cand.State == atev1.SandboxVersionStateDisabled) {
+			continue
+		}
+		if len(cand.Assets[runtime.GOARCH]) > 0 && !sameAssetDigests(cand.Assets[runtime.GOARCH], v1.Assets[runtime.GOARCH]) {
+			return withState(withName(*cand, name), atev1.SandboxVersionStateEnabled)
+		}
+	}
 	if class == atev1.SandboxClassGvisor {
 		// withName copies the assets, so no test shares the package-level map.
 		v1.Assets = gvisorSecondReleaseAssets
@@ -678,6 +691,18 @@ func secondSandboxVersion(v1 atev1.SandboxVersionConfig, name string, class atev
 		}
 	}
 	return v2
+}
+
+func sameAssetDigests(a, b map[string]atev1.AssetFile) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for name, af := range a {
+		if bf, ok := b[name]; !ok || af.SHA256 != bf.SHA256 {
+			return false
+		}
+	}
+	return true
 }
 
 // withName returns a copy of v named name.
