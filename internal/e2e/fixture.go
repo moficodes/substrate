@@ -25,6 +25,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -156,30 +159,28 @@ func DeploySubstrateFixture(t *testing.T, ctx context.Context, clients *Clients,
 		opt(&cfg)
 	}
 
+	tmplInline, tmplBlocks := substrateTemplateSubstitutions(name, trustBundles)
+	maps.Copy(tmplInline, cfg.templateValues)
+	rendered := koResolve(t, renderManifest(t, manifests.Template, tmplInline, tmplBlocks), cfg.imageUser)
+	templates := decodeSubstrateTemplates(t, rendered)
+
+	atespace := templates[0].GetMetadata().GetAtespace()
+	waitForNamespaceNotTerminating(t, ctx, clients, atespace)
+
 	// The pool manifest also carries the namespace. Its cleanup is registered
 	// first so it runs last (t.Cleanup is LIFO), after the templates that
-	// select the pool's workers are gone.
+	// select the pool's workers are gone. --wait=false hands node capacity back
+	// immediately instead of blocking on namespace finalizers.
 	inline, blocks := fixtureSubstitutions(name)
 	poolManifest := renderManifest(t, manifests.Pool, inline, blocks)
 	koApply(t, poolManifest)
 	t.Cleanup(func() {
-		delArgs := []string{"delete", "--ignore-not-found", "-f", poolManifest}
+		delArgs := []string{"delete", "--ignore-not-found", "--wait=false", "-f", poolManifest}
 		if KubeContext != "" {
 			delArgs = append([]string{"--context=" + KubeContext}, delArgs...)
 		}
 		RunCmd(t, "kubectl", delArgs...)
 	})
-
-	tmplInline, tmplBlocks := substrateTemplateSubstitutions(name, trustBundles)
-	maps.Copy(tmplInline, cfg.templateValues)
-	var resolveArgs []string
-	if cfg.imageUser != "" {
-		resolveArgs = append(resolveArgs, "--image-user", cfg.imageUser)
-	}
-	rendered := koResolve(t, renderManifest(t, manifests.Template, tmplInline, tmplBlocks), resolveArgs...)
-	templates := decodeSubstrateTemplates(t, rendered)
-
-	atespace := templates[0].GetMetadata().GetAtespace()
 	for _, tmpl := range templates {
 		if got := tmpl.GetMetadata().GetAtespace(); got != atespace {
 			t.Fatalf("fixture %s declares templates in different atespaces (%q and %q)", manifests.Template, atespace, got)
@@ -243,4 +244,29 @@ func DeploySubstrateFixture(t *testing.T, ctx context.Context, clients *Clients,
 		}
 	}
 	return atespace, created
+}
+
+// waitForNamespaceNotTerminating waits if an earlier test deleted namespace
+// with --wait=false and Kubernetes has not finished removing it yet.
+func waitForNamespaceNotTerminating(t *testing.T, ctx context.Context, clients *Clients, namespace string) {
+	t.Helper()
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		ns, err := clients.K8s.CoreV1().Namespaces().Get(waitCtx, namespace, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("getting namespace %q: %v", namespace, err)
+		}
+		if ns.Status.Phase != corev1.NamespaceTerminating {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf("timed out waiting for terminating namespace %q to be removed", namespace)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }

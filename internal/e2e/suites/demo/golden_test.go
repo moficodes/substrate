@@ -27,11 +27,13 @@ import (
 )
 
 func TestGoldenSnapshotLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, fidelity := range []ateapi.SnapshotFidelity{
 		ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
 		ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES,
 	} {
 		t.Run(fidelity.String(), func(t *testing.T) {
+			t.Parallel()
 			ctx := t.Context()
 			clients := e2e.GetClients()
 			ns := e2e.CreateNamespace(t)

@@ -182,8 +182,9 @@ func storageClassOrEmpty(ctx context.Context, t *testing.T, clients *e2e.Clients
 func createTemplate(ctx context.Context, t *testing.T, clients *e2e.Clients, ns *e2e.Namespace, fixtureImage, storageClass string) *ateapi.ActorTemplate {
 	t.Helper()
 
-	// The probe supplies this suite's container image and resolved runtime.
-	probeAtespace, _ := e2e.DeployProbe(t, "combinedvolumes")
+	// The probe supplies this suite's container image and resolved runtime;
+	// CreateSubstrateTemplateFrom builds this test's own golden snapshot below.
+	probeAtespace, _ := e2e.DeployProbe(t, "combinedvolumes", e2e.WithoutGoldenSnapshot())
 	src := e2e.SubstrateFixture{
 		Atespace:      probeAtespace,
 		Name:          probeName,

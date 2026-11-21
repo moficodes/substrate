@@ -158,19 +158,21 @@ func startProbe(t *testing.T, ctx context.Context) *probeClient {
 	if err != nil {
 		t.Fatalf("reading egressprobe manifest template: %v", err)
 	}
+	image := e2e.ResolveFixtureImage(t, "go.ate.dev/substrate/internal/e2e/fixtures/testserver")
 	manifest := filepath.Join(t.TempDir(), "egressprobe.yaml")
 	rendered := strings.ReplaceAll(string(tmpl), "${NAMESPACE}", ns)
 	rendered = strings.ReplaceAll(rendered, "${SYSTEM_NAMESPACE}", e2e.SystemNamespace())
 	rendered = strings.ReplaceAll(rendered, "${EGRESS_GATEWAY_SERVICE}", e2e.ResourceName("atenet-egress"))
+	rendered = strings.ReplaceAll(rendered, "ko://go.ate.dev/substrate/internal/e2e/fixtures/testserver", image)
 	if err := os.WriteFile(manifest, []byte(rendered), 0o644); err != nil {
 		t.Fatalf("writing rendered egressprobe manifest: %v", err)
 	}
 
-	applyArgs := []string{"ko", "apply", "-f", manifest}
+	applyArgs := []string{"apply", "-f", manifest}
 	if e2e.KubeContext != "" {
-		applyArgs = append(applyArgs, "--", "--context="+e2e.KubeContext)
+		applyArgs = append([]string{"--context=" + e2e.KubeContext}, applyArgs...)
 	}
-	e2e.RunCmdWithEnv(t, []string{"KO_CONFIG_PATH=" + root}, filepath.Join(root, "hack/run-tool.sh"), applyArgs...)
+	e2e.RunCmd(t, "kubectl", applyArgs...)
 
 	waitForProbeReady(t, ctx, ns)
 
