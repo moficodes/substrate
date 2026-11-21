@@ -55,6 +55,7 @@ type modelTuple struct {
 // TestModelFGATests runs the checks in model_test.fga.yaml against model.fga
 // as ate-api-server loads it.
 func TestModelFGATests(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(modelTestFile)
 	if err != nil {
 		t.Fatalf("reading %s: %v", modelTestFile, err)

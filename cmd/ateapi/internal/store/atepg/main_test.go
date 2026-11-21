@@ -19,24 +19,33 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
+	"go.ate.dev/substrate/cmd/ateapi/internal/authz"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/dockerenv"
 )
 
-// One Postgres container serves every test in this package; each test gets
-// isolation via clearAll rather than a fresh container, which would be
-// far slower. Tests in this package are not safe to run with -parallel.
+const (
+	atepgTemplateDatabase = "atepg_template"
+	atepgTestPoolMaxConns = 4
+)
+
+// One Postgres container serves every test in this package. Tests that call
+// setupPostgresPersistence get an isolated database cloned from atepg_template.
 var (
 	containerOnce sync.Once
 	containerPool *pgxpool.Pool
 	containerDSN  string
 	containerPG   *postgres.PostgresContainer
 	containerErr  error
+	createDBMu    sync.Mutex
+	databaseCount atomic.Uint64
 )
 
 func TestMain(m *testing.M) {
@@ -45,7 +54,7 @@ func TestMain(m *testing.M) {
 		containerPool.Close()
 	}
 	if containerPG != nil {
-		if err := containerPG.Terminate(context.Background()); err != nil {
+		if err := containerPG.Terminate(context.Background(), testcontainers.StopTimeout(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "terminating PostgreSQL testcontainer: %v\n", err)
 			if code == 0 {
 				code = 1
@@ -67,6 +76,12 @@ func requirePool(t *testing.T) *pgxpool.Pool {
 			postgres.WithDatabase("atepg"),
 			postgres.WithUsername("atepg"),
 			postgres.WithPassword("atepg"),
+			testcontainers.WithCmdArgs(
+				"-c", "synchronous_commit=off",
+				"-c", "full_page_writes=off",
+				"-c", "max_connections=500",
+			),
+			postgres.BasicWaitStrategies(),
 		)
 		if err != nil {
 			containerErr = err
@@ -79,7 +94,14 @@ func requirePool(t *testing.T) *pgxpool.Pool {
 			return
 		}
 		containerDSN = dsn
-		pool, err := pgxpool.New(ctx, dsn)
+		cfg, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			containerErr = err
+			return
+		}
+		cfg.MaxConns = atepgTestPoolMaxConns
+		cfg.MinConns = 0
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			containerErr = err
 			return
@@ -97,7 +119,13 @@ func requirePool(t *testing.T) *pgxpool.Pool {
 			time.Sleep(500 * time.Millisecond)
 		}
 		if pingErr != nil {
+			pool.Close()
 			containerErr = fmt.Errorf("pinging PostgreSQL testcontainer after retries: %w", pingErr)
+			return
+		}
+		if err := seedTemplateDatabase(ctx, pool); err != nil {
+			pool.Close()
+			containerErr = err
 			return
 		}
 		containerPool = pool
@@ -109,6 +137,66 @@ func requirePool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("PostgreSQL testcontainer unavailable (requires Docker): %v", containerErr)
 	}
 	return containerPool
+}
+
+func seedTemplateDatabase(ctx context.Context, admin *pgxpool.Pool) error {
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+atepgTemplateDatabase); err != nil {
+		return fmt.Errorf("creating PostgreSQL template database: %w", err)
+	}
+	cfg := admin.Config().Copy()
+	cfg.ConnConfig.Database = atepgTemplateDatabase
+	cfg.MaxConns = 2
+	cfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("opening PostgreSQL template database: %w", err)
+	}
+	defer pool.Close()
+
+	p, err := NewPersistence(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("migrating PostgreSQL template database: %w", err)
+	}
+	defer p.Close()
+
+	fgaServer, err := authz.NewOpenFGAServer(pool)
+	if err != nil {
+		return fmt.Errorf("creating OpenFGA server on template database: %w", err)
+	}
+	defer fgaServer.Close()
+
+	if _, _, err := authz.EnsureStoreAndModel(ctx, pool, fgaServer); err != nil {
+		return fmt.Errorf("seeding OpenFGA store and model on template database: %w", err)
+	}
+	return nil
+}
+
+func cloneTemplatePool(t *testing.T) (*pgxpool.Pool, func()) {
+	t.Helper()
+	ctx := context.Background()
+	admin := requirePool(t)
+	dbName := fmt.Sprintf("atepg_test_%d", databaseCount.Add(1))
+	createDBMu.Lock()
+	_, createErr := admin.Exec(ctx, "CREATE DATABASE "+dbName+" TEMPLATE "+atepgTemplateDatabase)
+	createDBMu.Unlock()
+	if createErr != nil {
+		t.Fatalf("creating PostgreSQL test database: %v", createErr)
+	}
+
+	cfg := admin.Config().Copy()
+	cfg.ConnConfig.Database = dbName
+	cfg.MaxConns = atepgTestPoolMaxConns
+	cfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("opening PostgreSQL test database: %v", err)
+	}
+	return pool, func() {
+		pool.Close()
+		if _, err := admin.Exec(context.Background(), "DROP DATABASE "+dbName); err != nil {
+			t.Errorf("dropping PostgreSQL test database: %v", err)
+		}
+	}
 }
 
 func testConnectConfig(schema string) ConnectConfig {

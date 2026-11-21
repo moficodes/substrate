@@ -47,6 +47,7 @@ func setupTestAuthorizer(t *testing.T) *Authorizer {
 }
 
 func TestUnaryServerInterceptor_QuickRejectionAndDispatch(t *testing.T) {
+	t.Parallel()
 	authorizer := setupTestAuthorizer(t)
 
 	allowedCtx := principal.InjectContext(context.Background(), principal.PrincipalInfo{
@@ -152,6 +153,7 @@ func TestUnaryServerInterceptor_QuickRejectionAndDispatch(t *testing.T) {
 }
 
 func TestUnaryServerInterceptor_MalformedRequestRequiresPrincipalThenFailsClosed(t *testing.T) {
+	t.Parallel()
 	authorizer := setupTestAuthorizer(t)
 	interceptor := UnaryServerInterceptor(authorizer)
 
@@ -200,6 +202,7 @@ func TestUnaryServerInterceptor_MalformedRequestRequiresPrincipalThenFailsClosed
 // An RPC with no rule is denied, and an RPC its handler authorizes passes
 // through. Neither reaches OpenFGA, so the authorizer is nil.
 func TestUnaryServerInterceptor_UnregisteredAndHandlerAuthorizedRPCs(t *testing.T) {
+	t.Parallel()
 	const unregistered = "/substrate.ateapi.v1.Control/NotARealMethod"
 	aliceCtx := principal.InjectContext(context.Background(), principal.PrincipalInfo{
 		ID:   "alice@example.com",
@@ -240,6 +243,7 @@ func TestUnaryServerInterceptor_UnregisteredAndHandlerAuthorizedRPCs(t *testing.
 // Reflection streams pass through; any other stream is denied before its
 // handler runs.
 func TestStreamServerInterceptor(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		fullMethod string
@@ -269,6 +273,7 @@ func TestStreamServerInterceptor(t *testing.T) {
 }
 
 func TestUnaryServerInterceptor_ActorAndTemplateChecks(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pool := startPostgres(t)
 	fgaServer, err := NewOpenFGAServer(pool)
@@ -417,6 +422,7 @@ func TestUnaryServerInterceptor_ActorAndTemplateChecks(t *testing.T) {
 }
 
 func TestUnaryServerInterceptor_LifecycleEgressWorkerAndTagChecks(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pool := startPostgres(t)
 	fgaServer, err := NewOpenFGAServer(pool)
@@ -608,6 +614,7 @@ func TestUnaryServerInterceptor_LifecycleEgressWorkerAndTagChecks(t *testing.T) 
 }
 
 func TestUnaryServerInterceptor_SystemPrincipals(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pool := startPostgres(t)
 	fgaServer, err := NewOpenFGAServer(pool)

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -176,6 +177,10 @@ func FormatMember(member string) (string, error) {
 
 //go:embed model.fga
 var modelDSL string
+
+var compiledModel = sync.OnceValues(func() (*openfgav1.AuthorizationModel, error) {
+	return transformer.TransformDSLToProto(modelDSL)
+})
 
 // NewOpenFGAServer creates an embedded OpenFGA server backed by a transaction-aware
 // PostgreSQL datastore on pool. Calling Close on the returned server stops
@@ -342,10 +347,11 @@ func acquireInitLock(ctx context.Context, pool *pgxpool.Pool) (func(), error) {
 // the current schema. If an identical model already exists in the store, its ID
 // is reused; otherwise, the new model is written and its ID is returned.
 func ensureStoreAndModel(ctx context.Context, srv *server.Server) (string, string, error) {
-	modelProto, err := transformer.TransformDSLToProto(modelDSL)
+	baseModel, err := compiledModel()
 	if err != nil {
 		return "", "", fmt.Errorf("transform model.fga DSL to proto: %w", err)
 	}
+	modelProto := proto.Clone(baseModel).(*openfgav1.AuthorizationModel)
 
 	storeID, err := findOrCreateStore(ctx, srv, defaultStoreName)
 	if err != nil {

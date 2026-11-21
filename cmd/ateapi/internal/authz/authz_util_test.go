@@ -34,6 +34,7 @@ func testSystemPrincipals() SystemPrincipals {
 }
 
 func TestFormatMember(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		member  string
@@ -72,6 +73,7 @@ func TestFormatMember(t *testing.T) {
 }
 
 func TestParseBootstrapOwners(t *testing.T) {
+	t.Parallel()
 	got, err := parseBootstrapOwners([]string{"alice@example.com", " user:bob ", "alice@example.com", "a:b"})
 	if err != nil {
 		t.Fatalf("parseBootstrapOwners failed: %v", err)
@@ -93,6 +95,7 @@ func TestParseBootstrapOwners(t *testing.T) {
 }
 
 func TestParseSystemPrincipals(t *testing.T) {
+	t.Parallel()
 	const router = "spiffe://cluster.local/ns/ate-system/sa/atenet-router"
 	got, err := parseSystemPrincipals(SystemPrincipals{
 		ControllerSPIFFEID:       "spiffe://cluster.local/ns/ate-system/sa/ate-controller",
@@ -117,6 +120,7 @@ func TestParseSystemPrincipals(t *testing.T) {
 }
 
 func TestNewRejectsInvalidSystemPrincipals(t *testing.T) {
+	t.Parallel()
 	defaults := testSystemPrincipals()
 	for _, tc := range []struct {
 		name    string

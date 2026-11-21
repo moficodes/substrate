@@ -107,24 +107,29 @@ func migrationLockID(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 // The list contains all tables in the pre-migration schema. Goose creates the
 // migration ledger before it creates a later table.
 func rejectUnversionedSubstrateSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	var hasMetadata, hasSubstrateTables bool
-	err := pool.QueryRow(ctx, `
-		SELECT
-			to_regclass('schema_migrations') IS NOT NULL,
-			EXISTS (
-				SELECT 1 FROM information_schema.tables
-				WHERE table_schema = current_schema()
-				AND table_name IN (
-					'atespaces', 'actors', 'actor_templates',
-					'actor_snapshots', 'actor_snapshot_tags', 'workers',
-					'worker_outbox', 'worker_outbox_default',
-					'worker_outbox_trim', 'leases'
-				)
-			)`).Scan(&hasMetadata, &hasSubstrateTables)
-	if err != nil {
+	var hasMetadata bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&hasMetadata); err != nil {
 		return fmt.Errorf("check PostgreSQL migration ledger: %w", err)
 	}
-	if hasSubstrateTables && !hasMetadata {
+	if hasMetadata {
+		return nil
+	}
+	var hasSubstrateTables bool
+	err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = current_schema()
+			AND table_name IN (
+				'atespaces', 'actors', 'actor_templates',
+				'actor_snapshots', 'actor_snapshot_tags', 'workers',
+				'worker_outbox', 'worker_outbox_default',
+				'worker_outbox_trim', 'leases'
+			)
+		)`).Scan(&hasSubstrateTables)
+	if err != nil {
+		return fmt.Errorf("check PostgreSQL tables before migration: %w", err)
+	}
+	if hasSubstrateTables {
 		return errors.New("unsupported PostgreSQL schema: Substrate tables exist without a migration ledger")
 	}
 	return nil

@@ -17,6 +17,7 @@ package atepg
 import "testing"
 
 func TestDecodePageTokenRejectsWrongKeyShape(t *testing.T) {
+	t.Parallel()
 	token := encodePageToken(kindActor, "", []string{"only-an-atespace"})
 	if _, err := decodePageToken(token, kindActor, "", 2); err == nil {
 		t.Fatal("decodePageToken() accepted a global actor token with only one key part")

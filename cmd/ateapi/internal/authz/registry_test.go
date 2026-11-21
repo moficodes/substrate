@@ -25,6 +25,7 @@ import (
 )
 
 func TestDefaultRPCPermissions(t *testing.T) {
+	t.Parallel()
 	actorRef := &ateapi.ObjectRef{Atespace: "team-a", Name: "runner"}
 	actorMeta := &ateapi.ResourceMetadata{Atespace: "team-a", Name: "runner"}
 	localTemplate := &ateapi.ObjectRef{Atespace: "team-a", Name: "tmpl"}
@@ -346,6 +347,7 @@ func TestDefaultRPCPermissions(t *testing.T) {
 // A request missing an identifier a check needs, or naming a resource with an
 // invalid name, is rejected rather than having that check skipped.
 func TestDefaultRPCPermissions_MalformedIdentifierFailsClosed(t *testing.T) {
+	t.Parallel()
 	actorMeta := &ateapi.ResourceMetadata{Atespace: "team-a", Name: "runner"}
 	template := &ateapi.ObjectRef{Atespace: "shared", Name: "tmpl"}
 
@@ -657,6 +659,7 @@ func TestDefaultRPCPermissions_MalformedIdentifierFailsClosed(t *testing.T) {
 }
 
 func TestDefaultRPCPermissions_UnexpectedRequestTypeFailsClosed(t *testing.T) {
+	t.Parallel()
 	for fullMethod, r := range defaultRPCPermissions {
 		if r.authorizedInHandler != "" {
 			continue
@@ -671,6 +674,7 @@ func TestDefaultRPCPermissions_UnexpectedRequestTypeFailsClosed(t *testing.T) {
 // its handler authorizes it, and the registry names no RPC that isn't in
 // ateapi.proto.
 func TestDefaultRPCPermissions_CoversEveryServedRPC(t *testing.T) {
+	t.Parallel()
 	served := map[string]bool{}
 	services := ateapi.File_api_ateapi_v1_ateapi_proto.Services()
 	for i := range services.Len() {
