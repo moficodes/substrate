@@ -426,6 +426,7 @@ func (p *Persistence) truncateWorkerOutboxDefault(ctx context.Context, q querier
 // to force the consumer to resync from the primary tables.
 func (p *Persistence) WatchWorkers(ctx context.Context) (*store.WorkerWatch, error) {
 	watchCtx, cancel := context.WithCancel(ctx)
+	stopOnClose := context.AfterFunc(p.bgCtx, cancel)
 
 	// cursor starts at xmin-1. baseline records pre-subscribe history (xid < xmin)
 	// so past drops aren't mistaken for losses, while preventing artificially
@@ -438,6 +439,7 @@ func (p *Persistence) WatchWorkers(ctx context.Context) (*store.WorkerWatch, err
 		                     WHERE xid < pg_snapshot_xmin(pg_current_snapshot())), '0'::xid8),
 		           COALESCE((SELECT xid FROM worker_outbox_trim), '0'::xid8))::text,
 		       pg_postmaster_start_time()::text`).Scan(&cursorXid, &baselineXid, &baselineStart); err != nil {
+		stopOnClose()
 		cancel()
 		return nil, fmt.Errorf("reading worker outbox cursor: %w", err)
 	}
@@ -445,11 +447,18 @@ func (p *Persistence) WatchWorkers(ctx context.Context) (*store.WorkerWatch, err
 	ch := make(chan store.WorkerEvent, 128)
 	// Committed writes in this process are published straight onto ch, ahead
 	// of the poll that would carry them.
-	p.addWatcher(ch)
+	if !p.addWatcher(ch) {
+		stopOnClose()
+		cancel()
+		close(ch)
+		return store.NewWorkerWatch(ch, cancel), nil
+	}
 	go func() {
 		defer func() {
+			stopOnClose()
 			p.removeWatcher(ch)
 			close(ch)
+			p.watchersWG.Done()
 		}()
 		ticker := time.NewTicker(outboxPollInterval)
 		defer ticker.Stop()

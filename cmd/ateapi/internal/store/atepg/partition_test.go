@@ -126,14 +126,14 @@ func runContractSuitePartitioned(t *testing.T, key string, tables []string, allo
 	pool, tables := partitionedPool(t, schema, key, tables)
 	check := newFanOutCheck(key, tables, allowed, pool, t.Errorf)
 	traced := openPool(t, schema, check)
+	p, err := NewPersistence(t.Context(), traced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	setTestPolicyManager(t, p)
 	storecontract.RunContractTests(t, func(t *testing.T) store.Interface {
-		p, err := NewPersistence(t.Context(), traced)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(p.Close)
-		clearAll(t, p)
-		setTestPolicyManager(t, p)
+		clearTables(t, pool)
 		return p
 	})
 	// A table the suite never reads or writes goes unchecked, so a missing
@@ -360,6 +360,8 @@ func openPool(t *testing.T, schema string, tracer pgx.QueryTracer) *pgxpool.Pool
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg.MaxConns = atepgTestPoolMaxConns
+	cfg.MinConns = 0
 	cfg.ConnConfig.RuntimeParams["search_path"] = pgx.Identifier{schema}.Sanitize()
 	cfg.ConnConfig.Tracer = tracer
 	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)

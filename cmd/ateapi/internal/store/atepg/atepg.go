@@ -75,18 +75,27 @@ type Persistence struct {
 	policyManager         *authz.PolicyManager
 	leaseTTL              time.Duration
 	pollFailureCloseAfter time.Duration
-	stopMaintenance       context.CancelFunc
+	bgCtx                 context.Context
+	stopBG                context.CancelFunc
 	maintenanceDone       chan struct{}
-	// watchMu guards watchers, the live WatchWorkers channels.
-	watchMu  sync.Mutex
-	watchers map[chan store.WorkerEvent]struct{}
+	// watchMu guards closed, watchers, and watchersWG.Add.
+	watchMu    sync.Mutex
+	closed     bool
+	watchers   map[chan store.WorkerEvent]struct{}
+	watchersWG sync.WaitGroup
 }
 
 // addWatcher enrolls a WatchWorkers channel to receive locally published events.
-func (p *Persistence) addWatcher(ch chan store.WorkerEvent) {
+// It returns false when Persistence is already closed.
+func (p *Persistence) addWatcher(ch chan store.WorkerEvent) bool {
 	p.watchMu.Lock()
 	defer p.watchMu.Unlock()
+	if p.closed {
+		return false
+	}
 	p.watchers[ch] = struct{}{}
+	p.watchersWG.Add(1)
+	return true
 }
 
 // removeWatcher unenrolls a channel. The caller must call it before closing
@@ -304,47 +313,78 @@ func NewPersistence(ctx context.Context, pool *pgxpool.Pool) (*Persistence, erro
 	return newPersistence(ctx, pool, pool, pool, pool)
 }
 
+// NewMigratedPersistence wraps a pool whose schema migrations and initial
+// outbox partitions are already present, such as a database cloned from a
+// migrated template in tests.
+func NewMigratedPersistence(pool *pgxpool.Pool) *Persistence {
+	return startPersistence(pool, pool, pool, pool)
+}
+
 func newPersistence(ctx context.Context, pool, watchPool, ownerPool, probePool *pgxpool.Pool) (*Persistence, error) {
 	if err := applyMigrations(ctx, ownerPool); err != nil {
 		return nil, err
 	}
-	maintenanceCtx, stopMaintenance := context.WithCancel(context.Background())
-	p := &Persistence{
+	p := newUnstartedPersistence(pool, watchPool, ownerPool, probePool)
+	// Cover the partition lead before accepting writes; from then on the
+	// maintenance loop keeps partitions ahead of the clock (and the
+	// DEFAULT partition catches writes if it ever falls behind).
+	bootNow, err := p.outboxNow(ctx)
+	if err != nil {
+		p.stopBG()
+		return nil, err
+	}
+	if err := p.createWorkerOutboxPartitions(ctx, outboxPartitionLeadTimes(bootNow)...); err != nil {
+		p.stopBG()
+		return nil, err
+	}
+	p.startMaintenance()
+	return p, nil
+}
+
+func startPersistence(pool, watchPool, ownerPool, probePool *pgxpool.Pool) *Persistence {
+	p := newUnstartedPersistence(pool, watchPool, ownerPool, probePool)
+	p.startMaintenance()
+	return p
+}
+
+func newUnstartedPersistence(pool, watchPool, ownerPool, probePool *pgxpool.Pool) *Persistence {
+	bgCtx, stopBG := context.WithCancel(context.Background())
+	return &Persistence{
 		pool:                  pool,
 		watchPool:             watchPool,
 		ownerPool:             ownerPool,
 		probePool:             probePool,
 		leaseTTL:              defaultLeaseTTL,
 		pollFailureCloseAfter: outboxPollFailureCloseAfter,
-		stopMaintenance:       stopMaintenance,
+		bgCtx:                 bgCtx,
+		stopBG:                stopBG,
 		maintenanceDone:       make(chan struct{}),
 		watchers:              make(map[chan store.WorkerEvent]struct{}),
 	}
-	// Cover the partition lead before accepting writes; from then on the
-	// maintenance loop keeps partitions ahead of the clock (and the
-	// DEFAULT partition catches writes if it ever falls behind).
-	bootNow, err := p.outboxNow(ctx)
-	if err != nil {
-		stopMaintenance()
-		return nil, err
-	}
-	if err := p.createWorkerOutboxPartitions(ctx, outboxPartitionLeadTimes(bootNow)...); err != nil {
-		stopMaintenance()
-		return nil, err
-	}
-	go func() {
-		defer close(p.maintenanceDone)
-		p.maintenance(maintenanceCtx)
-	}()
-	return p, nil
 }
 
-// Close stops the maintenance loop and waits for it to exit,
-// then closes the auxiliary pools if Connect created them. It does not close the
-// main pool, which the caller owns.
+func (p *Persistence) startMaintenance() {
+	go func() {
+		defer close(p.maintenanceDone)
+		p.maintenance(p.bgCtx)
+	}()
+}
+
+// Close stops background maintenance and active WatchWorkers pollers, waits
+// for them to exit, then closes the auxiliary pools if Connect created them.
+// It does not close the main pool, which the caller owns.
 func (p *Persistence) Close() {
-	p.stopMaintenance()
+	p.watchMu.Lock()
+	if p.closed {
+		p.watchMu.Unlock()
+		return
+	}
+	p.closed = true
+	p.watchMu.Unlock()
+
+	p.stopBG()
 	<-p.maintenanceDone
+	p.watchersWG.Wait()
 	if p.ownsWatchPool {
 		p.watchPool.Close()
 	}

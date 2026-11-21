@@ -17,10 +17,10 @@ package authz
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
-	"os/exec"
-	"runtime"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,90 +38,157 @@ import (
 	"go.ate.dev/substrate/internal/principal"
 )
 
-func configureDockerEnv(ctx context.Context) error {
-	if os.Getenv("DOCKER_HOST") != "" {
-		return nil
+const (
+	authzTemplateDatabase = "authz_template"
+	authzPoolMaxConns     = 4
+)
+
+var (
+	pgOnce        sync.Once
+	pgAdminPool   *pgxpool.Pool
+	pgContainer   *postgres.PostgresContainer
+	pgInitErr     error
+	pgCreateDBMu  sync.Mutex
+	pgDatabaseSeq atomic.Uint64
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	shutdownPostgres()
+	os.Exit(code)
+}
+
+func shutdownPostgres() {
+	if pgAdminPool != nil {
+		pgAdminPool.Close()
+		pgAdminPool = nil
 	}
-	output, err := exec.CommandContext(ctx, "docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}").Output()
-	if err != nil {
-		return err
-	}
-	host := strings.TrimSpace(string(output))
-	if host == "" {
-		return nil
-	}
-	_ = os.Setenv("DOCKER_HOST", host)
-	if os.Getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE") == "" {
-		socket := host
-		if runtime.GOOS == "darwin" {
-			socket = "/var/run/docker.sock"
+	if pgContainer != nil {
+		if err := pgContainer.Terminate(context.Background(), testcontainers.StopTimeout(0)); err != nil {
+			fmt.Fprintf(os.Stderr, "terminating PostgreSQL testcontainer: %v\n", err)
 		}
-		_ = os.Setenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", socket)
+		pgContainer = nil
 	}
-	return nil
+}
+
+func requireAdminPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pgOnce.Do(func() {
+		ctx := context.Background()
+		if err := dockerenv.Configure(ctx); err != nil {
+			pgInitErr = err
+			return
+		}
+		pgContainer, pgInitErr = postgres.Run(ctx,
+			"postgres:18-alpine",
+			postgres.WithDatabase("postgres"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			testcontainers.WithCmdArgs(
+				"-c", "synchronous_commit=off",
+				"-c", "full_page_writes=off",
+				"-c", "max_connections=500",
+			),
+			postgres.BasicWaitStrategies(),
+		)
+		if pgInitErr != nil {
+			return
+		}
+		connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			pgInitErr = err
+			shutdownPostgres()
+			return
+		}
+		adminCfg, err := pgxpool.ParseConfig(connStr)
+		if err != nil {
+			pgInitErr = err
+			shutdownPostgres()
+			return
+		}
+		adminCfg.MaxConns = authzPoolMaxConns
+		adminCfg.MinConns = 0
+		pgAdminPool, pgInitErr = pgxpool.NewWithConfig(ctx, adminCfg)
+		if pgInitErr != nil {
+			shutdownPostgres()
+			return
+		}
+		var pingErr error
+		for i := 0; i < 30; i++ {
+			pingErr = pgAdminPool.Ping(ctx)
+			if pingErr == nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if pingErr != nil {
+			pgInitErr = fmt.Errorf("timed out waiting for postgres ping: %w", pingErr)
+			shutdownPostgres()
+			return
+		}
+		if _, err := pgAdminPool.Exec(ctx, "CREATE DATABASE "+authzTemplateDatabase); err != nil {
+			pgInitErr = fmt.Errorf("creating template database: %w", err)
+			shutdownPostgres()
+			return
+		}
+		tmplCfg := pgAdminPool.Config().Copy()
+		tmplCfg.ConnConfig.Database = authzTemplateDatabase
+		tmplCfg.MaxConns = 2
+		tmplCfg.MinConns = 0
+		tmplPool, err := pgxpool.NewWithConfig(ctx, tmplCfg)
+		if err != nil {
+			pgInitErr = fmt.Errorf("opening template database: %w", err)
+			shutdownPostgres()
+			return
+		}
+		db := stdlib.OpenDBFromPool(tmplPool)
+		provider, err := goose.NewProvider(goose.DialectPostgres, db, os.DirFS("../store/atepg/migrations"))
+		if err == nil {
+			_, err = provider.Up(ctx)
+		}
+		_ = db.Close()
+		tmplPool.Close()
+		if err != nil {
+			pgInitErr = fmt.Errorf("migrating template database: %w", err)
+			shutdownPostgres()
+			return
+		}
+	})
+	if pgInitErr != nil {
+		if dockerenv.Required() {
+			t.Fatalf("PostgreSQL testcontainer unavailable and required (CI or REQUIRE_DOCKER is set): %v", pgInitErr)
+		}
+		t.Skipf("PostgreSQL testcontainer unavailable (requires Docker): %v", pgInitErr)
+	}
+	return pgAdminPool
 }
 
 func startPostgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()
-	// Without Docker the tests skip locally, but must fail in CI, where a
-	// skip would pass the package without running it.
-	unavailable := t.Skipf
-	if dockerenv.Required() {
-		unavailable = t.Fatalf
-	}
-	if err := configureDockerEnv(ctx); err != nil {
-		unavailable("docker is unavailable: %v", err)
-	}
-
-	pgContainer, err := postgres.Run(ctx,
-		"postgres:18-alpine",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("postgres"),
-		postgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		unavailable("failed to start postgres container: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = testcontainers.TerminateContainer(pgContainer)
-	})
-
-	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("getting connection string: %v", err)
+	admin := requireAdminPool(t)
+	dbName := fmt.Sprintf("authz_test_%d", pgDatabaseSeq.Add(1))
+	pgCreateDBMu.Lock()
+	_, createErr := admin.Exec(ctx, "CREATE DATABASE "+dbName+" TEMPLATE "+authzTemplateDatabase)
+	pgCreateDBMu.Unlock()
+	if createErr != nil {
+		t.Fatalf("creating test database: %v", createErr)
 	}
 
-	pool, err := pgxpool.New(ctx, connStr)
+	cfg := admin.Config().Copy()
+	cfg.ConnConfig.Database = dbName
+	cfg.MaxConns = authzPoolMaxConns
+	cfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("creating pgxpool: %v", err)
 	}
 	t.Cleanup(func() {
 		pool.Close()
-	})
-
-	var pingErr error
-	for i := 0; i < 30; i++ {
-		pingErr = pool.Ping(ctx)
-		if pingErr == nil {
-			break
+		if _, err := admin.Exec(context.Background(), "DROP DATABASE "+dbName); err != nil {
+			t.Errorf("dropping test database: %v", err)
 		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if pingErr != nil {
-		t.Fatalf("timed out waiting for postgres ping: %v", pingErr)
-	}
-
-	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, os.DirFS("../store/atepg/migrations"))
-	if err != nil {
-		t.Fatalf("create goose provider: %v", err)
-	}
-	if _, err := provider.Up(ctx); err != nil {
-		t.Fatalf("run Substrate and OpenFGA migrations: %v", err)
-	}
+	})
 	return pool
 }
 
@@ -140,6 +207,7 @@ func newTestAuthz(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (*serve
 }
 
 func TestEnsureStoreAndModel_NilArgs(t *testing.T) {
+	t.Parallel()
 	if _, err := NewOpenFGAServer(nil); err == nil {
 		t.Fatal("expected error when pool is nil in NewOpenFGAServer")
 	}
@@ -149,6 +217,7 @@ func TestEnsureStoreAndModel_NilArgs(t *testing.T) {
 }
 
 func TestEnsureStoreAndModel_InitializeAndCheck(t *testing.T) {
+	t.Parallel()
 	pool := startPostgres(t)
 	ctx := context.Background()
 
@@ -235,6 +304,7 @@ func TestEnsureStoreAndModel_InitializeAndCheck(t *testing.T) {
 }
 
 func TestTransactionalDatastore_RollbackAndCommit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	pool := startPostgres(t)
 
@@ -437,6 +507,7 @@ func writeTestTuple(t *testing.T, ctx context.Context, pool *pgxpool.Pool, pm *P
 }
 
 func TestAuthorizerAndPolicyManager_RuntimeChecks(t *testing.T) {
+	t.Parallel()
 	pool := startPostgres(t)
 	ctx := context.Background()
 
@@ -547,6 +618,7 @@ func TestAuthorizerAndPolicyManager_RuntimeChecks(t *testing.T) {
 }
 
 func TestFormatUser_NoCollision(t *testing.T) {
+	t.Parallel()
 	u1 := formatUser("alice")
 	u2 := formatUser("user:alice")
 	if u1 == u2 {
@@ -555,6 +627,7 @@ func TestFormatUser_NoCollision(t *testing.T) {
 }
 
 func TestAtespacedObjects_NoCollision(t *testing.T) {
+	t.Parallel()
 	// '/' separates the atespace from the name, so a '/' inside either must
 	// not produce another resource's ID.
 	for _, format := range []func(atespace, name string) string{ActorObject, ActorTemplateObject} {

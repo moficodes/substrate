@@ -23,6 +23,7 @@ import (
 )
 
 func TestContextualTuples(t *testing.T) {
+	t.Parallel()
 	parentGlobal := func(atespace string) *openfgav1.TupleKey {
 		return &openfgav1.TupleKey{User: GlobalRootObject, Relation: "parent_global", Object: atespace}
 	}

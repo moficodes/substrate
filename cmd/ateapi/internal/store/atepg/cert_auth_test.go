@@ -43,6 +43,7 @@ import (
 )
 
 func TestBundledPostgresCertificateAuthentication(t *testing.T) {
+	t.Parallel()
 	// Reuse the package's Docker requirement, including its fail-closed CI guard.
 	requirePool(t)
 	dir := t.TempDir()
@@ -91,13 +92,14 @@ func TestBundledPostgresCertificateAuthentication(t *testing.T) {
 	container, err := postgres.Run(t.Context(), "postgres:18-alpine",
 		postgres.WithDatabase("atepg"), postgres.WithUsername("postgres"), postgres.WithPassword("unused"),
 		postgres.WithSSLCert(clientRoot, serverCert, serverKey), postgres.WithConfigFile(configPath),
+		testcontainers.WithCmdArgs("-c", "synchronous_commit=off", "-c", "full_page_writes=off"),
 		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: strings.NewReader(cm.Data["pg_hba.conf"]), ContainerFilePath: "/tmp/testcontainers-go/postgres/pg_hba.conf", FileMode: 0644}),
 		postgres.BasicWaitStrategies(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	testcontainers.CleanupContainer(t, container)
+	testcontainers.CleanupContainer(t, container, testcontainers.StopTimeout(0))
 	// Run the same bootstrap as ate-setup, then prove it creates passwordless logins.
 	script := postgressetup.Script() + fmt.Sprintf(`
  DO $verify$

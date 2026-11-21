@@ -18,30 +18,46 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.ate.dev/substrate/api/ateapi/v1"
 	"go.ate.dev/substrate/cmd/ateapi/internal/authz"
 	"go.ate.dev/substrate/internal/installdefaults"
 )
 
-// clearAll truncates every table so the next test starts from an empty store
-// without paying for a fresh database. Nothing in production mass-deletes
-// state, so the statement lives here rather than on Persistence.
+// clearTables deletes rows from every mutable Substrate and OpenFGA table in
+// foreign-key order without allocating new relation files via TRUNCATE.
+func clearTables(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	const stmt = `
+		DELETE FROM tags;
+		DELETE FROM actors;
+		DELETE FROM actor_templates;
+		DELETE FROM atespaces;
+		DELETE FROM global_access_policy;
+		DELETE FROM workers;
+		DELETE FROM leases;
+		DELETE FROM worker_outbox;
+		DELETE FROM worker_outbox_trim;
+		DELETE FROM tuple;
+		DELETE FROM changelog`
+	if _, err := pool.Exec(context.Background(), stmt); err != nil {
+		t.Fatalf("clearing tables: %v", err)
+	}
+}
+
 func clearAll(t *testing.T, p *Persistence) {
 	t.Helper()
-	if _, err := p.pool.Exec(context.Background(), `TRUNCATE atespaces, global_access_policy, atespace_access_policies, actors, actor_egress_policies, actor_templates, tags, workers, worker_assignments, leases, worker_outbox, worker_outbox_trim, tuple, changelog`); err != nil {
-		t.Fatalf("truncating tables: %v", err)
-	}
+	clearTables(t, p.pool)
 }
 
 func setupPostgresPersistence(t *testing.T) *Persistence {
 	t.Helper()
-	ctx := context.Background()
-	p, err := NewPersistence(ctx, requirePool(t))
-	if err != nil {
-		t.Fatalf("NewPersistence failed: %v", err)
-	}
-	t.Cleanup(p.Close)
-	clearAll(t, p)
+	pool, dropDB := cloneTemplatePool(t)
+	p := NewMigratedPersistence(pool)
+	t.Cleanup(func() {
+		p.Close()
+		dropDB()
+	})
 	setTestPolicyManager(t, p)
 	return p
 }

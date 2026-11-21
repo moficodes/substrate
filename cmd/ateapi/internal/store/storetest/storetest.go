@@ -31,6 +31,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/openfga/openfga/pkg/server"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"go.ate.dev/substrate/api/ateapi/v1"
 	"go.ate.dev/substrate/cmd/ateapi/internal/authz"
@@ -43,12 +45,28 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const (
+	templateDatabaseName = "ateapi_template"
+	testPoolMaxConns     = 4
+)
+
+type testDatabase struct {
+	pool          *pgxpool.Pool
+	fgaServer     *server.Server
+	policyManager *authz.PolicyManager
+}
+
 var (
 	containerOnce sync.Once
 	adminPool     *pgxpool.Pool
 	containerPG   *postgres.PostgresContainer
 	containerErr  error
+	// createDBMu serializes CREATE DATABASE ... TEMPLATE calls because
+	// PostgreSQL rejects concurrent template reads with SQLSTATE 55006.
+	createDBMu    sync.Mutex
 	databaseCount atomic.Uint64
+	freeDBMu      sync.Mutex
+	freeDBs       []*testDatabase
 	// pools maps each *atepg.Persistence SetupPostgresPersistence returned to
 	// its pool, for fixtures the store API cannot write.
 	pools sync.Map
@@ -56,7 +74,7 @@ var (
 
 // SetupTestStore returns a real PostgreSQL-backed store with a database unique
 // to this test. A shared container keeps this suitable for packages that run
-// subtests in parallel; databases are dropped during cleanup.
+// subtests in parallel; databases are reset and recycled during cleanup.
 func SetupTestStore(t *testing.T) (store.Interface, func()) {
 	t.Helper()
 	return SetupPostgresPersistence(t), func() {}
@@ -65,44 +83,94 @@ func SetupTestStore(t *testing.T) (store.Interface, func()) {
 // SetupPostgresPersistence returns an isolated atepg persistence instance.
 func SetupPostgresPersistence(t *testing.T) *atepg.Persistence {
 	t.Helper()
-	ctx := context.Background()
+	db := acquireTestDatabase(t)
+	persistence := atepg.NewMigratedPersistence(db.pool)
+	persistence.SetPolicyManager(db.policyManager)
+	pools.Store(persistence, db.pool)
+	t.Cleanup(func() {
+		persistence.Close()
+		pools.Delete(persistence)
+		if err := resetTestDatabase(context.Background(), db.pool); err != nil {
+			db.fgaServer.Close()
+			db.pool.Close()
+			t.Errorf("resetting PostgreSQL test database: %v", err)
+			return
+		}
+		releaseTestDatabase(db)
+	})
+	return persistence
+}
+
+func acquireTestDatabase(t *testing.T) *testDatabase {
+	t.Helper()
 	admin := requireAdminPool(t)
+
+	freeDBMu.Lock()
+	if n := len(freeDBs); n > 0 {
+		db := freeDBs[n-1]
+		freeDBs = freeDBs[:n-1]
+		freeDBMu.Unlock()
+		return db
+	}
+	freeDBMu.Unlock()
+
+	ctx := context.Background()
 	databaseName := fmt.Sprintf("ateapi_test_%d", databaseCount.Add(1))
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+databaseName); err != nil {
-		t.Fatalf("creating PostgreSQL test database: %v", err)
+	createDBMu.Lock()
+	_, createErr := admin.Exec(ctx, "CREATE DATABASE "+databaseName+" TEMPLATE "+templateDatabaseName)
+	createDBMu.Unlock()
+	if createErr != nil {
+		t.Fatalf("creating PostgreSQL test database: %v", createErr)
 	}
 
 	config := admin.Config().Copy()
 	config.ConnConfig.Database = databaseName
+	config.MaxConns = testPoolMaxConns
+	config.MinConns = 0
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		t.Fatalf("connecting to PostgreSQL test database: %v", err)
 	}
-	persistence, err := atepg.NewPersistence(ctx, pool)
-	if err != nil {
-		pool.Close()
-		t.Fatalf("creating PostgreSQL persistence: %v", err)
-	}
-	pools.Store(persistence, pool)
-	t.Cleanup(func() {
-		pools.Delete(persistence)
-		pool.Close()
-		if _, err := admin.Exec(context.Background(), "DROP DATABASE "+databaseName); err != nil {
-			t.Errorf("dropping PostgreSQL test database: %v", err)
-		}
-	})
-	// The server always wires a PolicyManager, so test stores do too.
 	fgaServer, err := authz.NewOpenFGAServer(pool)
 	if err != nil {
+		pool.Close()
 		t.Fatalf("creating OpenFGA server: %v", err)
 	}
-	t.Cleanup(fgaServer.Close)
 	_, policyManager, err := authz.New(ctx, pool, fgaServer, nil, DefaultSystemPrincipals())
 	if err != nil {
+		fgaServer.Close()
+		pool.Close()
 		t.Fatalf("initializing OpenFGA authz: %v", err)
 	}
-	persistence.SetPolicyManager(policyManager)
-	return persistence
+	return &testDatabase{
+		pool:          pool,
+		fgaServer:     fgaServer,
+		policyManager: policyManager,
+	}
+}
+
+func releaseTestDatabase(db *testDatabase) {
+	freeDBMu.Lock()
+	freeDBs = append(freeDBs, db)
+	freeDBMu.Unlock()
+}
+
+func resetTestDatabase(ctx context.Context, pool *pgxpool.Pool) error {
+	const stmt = `
+		DELETE FROM tags;
+		DELETE FROM actors;
+		DELETE FROM actor_templates;
+		DELETE FROM atespaces;
+		DELETE FROM global_access_policy;
+		DELETE FROM workers;
+		DELETE FROM leases;
+		DELETE FROM worker_outbox;
+		DELETE FROM worker_outbox_trim;
+		DELETE FROM tuple;
+		DELETE FROM changelog;
+		DELETE FROM assertion`
+	_, err := pool.Exec(ctx, stmt)
+	return err
 }
 
 // DefaultSystemPrincipals returns valid SystemPrincipals for tests that
@@ -236,12 +304,20 @@ func RunTests(m *testing.M) {
 
 // Shutdown terminates the shared PostgreSQL container, if one was started.
 func Shutdown() {
+	freeDBMu.Lock()
+	dbs := freeDBs
+	freeDBs = nil
+	freeDBMu.Unlock()
+	for _, db := range dbs {
+		db.fgaServer.Close()
+		db.pool.Close()
+	}
 	if adminPool != nil {
 		adminPool.Close()
 		adminPool = nil
 	}
 	if containerPG != nil {
-		if err := containerPG.Terminate(context.Background()); err != nil {
+		if err := containerPG.Terminate(context.Background(), testcontainers.StopTimeout(0)); err != nil {
 			fmt.Fprintf(os.Stderr, "terminating PostgreSQL testcontainer: %v\n", err)
 		}
 		containerPG = nil
@@ -260,6 +336,12 @@ func requireAdminPool(t *testing.T) *pgxpool.Pool {
 			postgres.WithDatabase("postgres"),
 			postgres.WithUsername("postgres"),
 			postgres.WithPassword("postgres"),
+			testcontainers.WithCmdArgs(
+				"-c", "synchronous_commit=off",
+				"-c", "full_page_writes=off",
+				"-c", "max_connections=500",
+			),
+			postgres.BasicWaitStrategies(),
 		)
 		if containerErr != nil {
 			return
@@ -267,23 +349,40 @@ func requireAdminPool(t *testing.T) *pgxpool.Pool {
 		dsn, err := containerPG.ConnectionString(ctx, "sslmode=disable")
 		if err != nil {
 			containerErr = err
+			Shutdown()
 			return
 		}
-		adminPool, containerErr = pgxpool.New(ctx, dsn)
+		adminCfg, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			containerErr = err
+			Shutdown()
+			return
+		}
+		adminCfg.MaxConns = testPoolMaxConns
+		adminCfg.MinConns = 0
+		adminPool, containerErr = pgxpool.NewWithConfig(ctx, adminCfg)
 		if containerErr != nil {
+			Shutdown()
 			return
 		}
 		var pingErr error
 		for i := 0; i < 30; i++ {
 			pingErr = adminPool.Ping(ctx)
 			if pingErr == nil {
-				return
+				break
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		adminPool.Close()
-		adminPool = nil
-		containerErr = fmt.Errorf("pinging PostgreSQL testcontainer after retries: %w", pingErr)
+		if pingErr != nil {
+			containerErr = fmt.Errorf("pinging PostgreSQL testcontainer after retries: %w", pingErr)
+			Shutdown()
+			return
+		}
+		if err := seedTemplateDatabase(ctx, adminPool); err != nil {
+			containerErr = err
+			Shutdown()
+			return
+		}
 	})
 	if containerErr != nil {
 		if dockerenv.Required() {
@@ -292,4 +391,39 @@ func requireAdminPool(t *testing.T) *pgxpool.Pool {
 		t.Skipf("PostgreSQL testcontainer unavailable (requires Docker): %v", containerErr)
 	}
 	return adminPool
+}
+
+// seedTemplateDatabase creates templateDatabaseName with Substrate migrations
+// and the OpenFGA store and authorization model applied, then closes every
+// connection to it so CREATE DATABASE ... TEMPLATE can copy it cleanly.
+func seedTemplateDatabase(ctx context.Context, admin *pgxpool.Pool) error {
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+templateDatabaseName); err != nil {
+		return fmt.Errorf("creating PostgreSQL template database: %w", err)
+	}
+	cfg := admin.Config().Copy()
+	cfg.ConnConfig.Database = templateDatabaseName
+	cfg.MaxConns = 2
+	cfg.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("opening PostgreSQL template database: %w", err)
+	}
+	defer pool.Close()
+
+	persistence, err := atepg.NewPersistence(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("migrating PostgreSQL template database: %w", err)
+	}
+	defer persistence.Close()
+
+	fgaServer, err := authz.NewOpenFGAServer(pool)
+	if err != nil {
+		return fmt.Errorf("creating OpenFGA server on template database: %w", err)
+	}
+	defer fgaServer.Close()
+
+	if _, _, err := authz.EnsureStoreAndModel(ctx, pool, fgaServer); err != nil {
+		return fmt.Errorf("seeding OpenFGA store and model on template database: %w", err)
+	}
+	return nil
 }

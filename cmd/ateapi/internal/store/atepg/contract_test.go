@@ -21,15 +21,12 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/storecontract"
 )
 
-// setupPostgresStore adapts the concrete setup helper to the interface-typed
-// setup func the contract suite takes.
-func setupPostgresStore(t *testing.T) store.Interface {
-	t.Helper()
-	return setupPostgresPersistence(t)
-}
-
 // TestContractSuite runs the backend-neutral store.Interface assertions
 // against a real PostgreSQL instance.
 func TestContractSuite(t *testing.T) {
-	storecontract.RunContractTests(t, setupPostgresStore)
+	p := setupPostgresPersistence(t)
+	storecontract.RunContractTests(t, func(t *testing.T) store.Interface {
+		clearTables(t, p.pool)
+		return p
+	})
 }
