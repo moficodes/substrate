@@ -58,6 +58,8 @@ func InitForTestFake(tb testingTB, fakeKnownGates []Gate, values ...string) {
 	}
 
 	tb.Cleanup(func() {
+		globalInitLock.Lock()
+		defer globalInitLock.Unlock()
 		globalInitialized = prevInitialized
 		globalKnownGates = prevKnownGates
 		globalStateMap = prevStateMap

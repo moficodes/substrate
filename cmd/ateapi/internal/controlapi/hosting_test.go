@@ -34,6 +34,7 @@ import (
 // The worker must keep the actor, so its node still hosts it, until a retry
 // commits both.
 func TestHostingNodeAfterWorkerRelease(t *testing.T) {
+	t.Parallel()
 	// The worker is the one wireTestAssignment names, so an async or sync suspend
 	// reaches newWireCaptureWorkflow's fake atelet on its node.
 	wa := wireTestAssignment()
@@ -138,6 +139,7 @@ func TestHostingNodeAfterWorkerRelease(t *testing.T) {
 // TestHostingNodeAfterResumeOntoNewWorker verifies that a resume moves the
 // hosting node to the node of the worker it binds.
 func TestHostingNodeAfterResumeOntoNewWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}
@@ -206,6 +208,7 @@ func TestHostingNodeAfterResumeOntoNewWorker(t *testing.T) {
 // TestHostingNodeWithoutWorker pins which no-worker shapes count assigned_node
 // as hosting the actor.
 func TestHostingNodeWithoutWorker(t *testing.T) {
+	t.Parallel()
 	durable := func(st ateapi.SnapshotStorageState) *ateapi.SnapshotStorage {
 		return &ateapi.SnapshotStorage{State: st, Object: &ateapi.ObjectSnapshot{SnapshotUri: "gs://snaps/root/atespaces/a/actors/uid/snap-1"}}
 	}

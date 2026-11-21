@@ -78,6 +78,7 @@ func reportedAt(t *testing.T, gen int32, uri string) *ateapi.SnapshotReport {
 }
 
 func TestApplyActorSnapshotState(t *testing.T) {
+	t.Parallel()
 	const (
 		pending   = ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING
 		completed = ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
@@ -380,6 +381,7 @@ func TestApplyLatestDurableLogsStaleReports(t *testing.T) {
 				attrs map[string]string
 			}
 			var got []logged
+			t.Setenv("ATE_LOG_RECORDS_SET_FOR_TEST", "1")
 			prev := slog.Default()
 			slog.SetDefault(slog.New(slogHandlerFunc(func(r slog.Record) {
 				if r.Message != msgDurableOlder && r.Message != msgDurableNotRecorded && r.Message != msgDurableCrashedSuspend {
@@ -411,6 +413,7 @@ func TestApplyLatestDurableLogsStaleReports(t *testing.T) {
 // A report is applied to the stored actor under its lease. A refused report,
 // and a report that changes nothing, write nothing.
 func TestApplyReportedSnapshotState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	w := NewActorWorkflow(persistence, nil, nil, nil, nil, "", nil, nil)
@@ -598,6 +601,7 @@ func TestApplyReportedSnapshotState(t *testing.T) {
 }
 
 func TestActorOnNode(t *testing.T) {
+	t.Parallel()
 	actor := func(assigned string, localities ...string) *ateapi.Actor {
 		status := &ateapi.ActorStatus{AssignedNode: assigned}
 		for i, l := range localities {
@@ -634,6 +638,7 @@ func ateletReported(t *testing.T, gen int32) *ateletpb.SnapshotReport {
 }
 
 func TestApplyAteletResponseState(t *testing.T) {
+	t.Parallel()
 	const (
 		pending    = ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING
 		completed  = ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED

@@ -35,6 +35,7 @@ import (
 )
 
 func TestDeleteActorWorkflow_ExecutionPaths(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		seedState   ateapi.ActorState
@@ -108,6 +109,7 @@ func TestDeleteActorWorkflow_ExecutionPaths(t *testing.T) {
 // delete do not wait for its atelet. A node that is still there may get its
 // atelet back, and a failed lookup proves nothing, so both stay retryable.
 func TestEnsureAteletTerminated_NodeGone(t *testing.T) {
+	t.Parallel()
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}
 	actor := &ateapi.Actor{Status: &ateapi.ActorStatus{AssignedNode: "node1"}}
 	for _, tc := range []struct {
@@ -152,6 +154,7 @@ func (*detachDeletePlugin) DeleteVolume(context.Context, string) error { return 
 // A volume detach on the gone node still runs: OK and NotFound from the plugin
 // count as detached, and any other error fails the step as before.
 func TestRevertAndDelete_AssignedNodeGone(t *testing.T) {
+	t.Parallel()
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
 	for _, tc := range []struct {
@@ -277,6 +280,7 @@ func TestRevertAndDelete_AssignedNodeGone(t *testing.T) {
 // TestEnsureMarkedDeleting_AllStates checks that every actor state can be
 // marked DELETING, and that a second call leaves the marked actor unwritten.
 func TestEnsureMarkedDeleting_AllStates(t *testing.T) {
+	t.Parallel()
 	for _, seedState := range allActorStates {
 		t.Run(seedState.String(), func(t *testing.T) {
 			ctx := context.Background()
@@ -317,6 +321,7 @@ func TestEnsureMarkedDeleting_AllStates(t *testing.T) {
 // out: the external snapshot the actor owns, and any snapshot an abandoned
 // suspend left in flight, but never one the actor is only borrowing from a tag.
 func TestEnsureExternalSnapshotsReleased(t *testing.T) {
+	t.Parallel()
 	// inFlightSnapshotName names a snapshot written during a suspend operation
 	// that never finalized.
 	const inFlightSnapshotName = "2026-01-01t00-00-00z-abandoned"
@@ -408,6 +413,7 @@ func TestEnsureExternalSnapshotsReleased(t *testing.T) {
 //   - objects that dont have an entry in the DB
 //   - a suspend that died before it recorded anything in the DB
 func TestEnsureExternalSnapshotsReleased_CollectsStrandedSnapshots(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -452,6 +458,7 @@ func TestEnsureExternalSnapshotsReleased_CollectsStrandedSnapshots(t *testing.T)
 // TestDeleteActor_CollectsSnapshotWithoutActorTemplate checks that snapshots
 // are collected even if the actor template is gone.
 func TestDeleteActor_CollectsInFlightSnapshotWithoutTemplate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	objects := objectstoretest.New()
@@ -490,6 +497,7 @@ func TestDeleteActor_CollectsInFlightSnapshotWithoutTemplate(t *testing.T) {
 // ensureExternalSnapshotsReleased returns that error, preserves the un-deleted
 // objects, and cleanly completes the deletion on a subsequent retry.
 func TestEnsureExternalSnapshotsReleased_DeletePrefixFailure(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	template := seedSubstrateTemplate(t, ctx, persistence, "sub-tmpl")
@@ -541,6 +549,7 @@ func TestEnsureExternalSnapshotsReleased_DeletePrefixFailure(t *testing.T) {
 // DeleteActor or RevertActor can delete the in-progress snapshot:
 // whatever they cannot name is leaked for good.
 func TestDeleteActor_CollectsSnapshotsAfterWorkerDelete(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// hasBeenSuspended means the actor was replacing a snapshot it took
@@ -638,6 +647,7 @@ func TestDeleteActor_CollectsSnapshotsAfterWorkerDelete(t *testing.T) {
 // delete_time. Retries keep that delete_time and write nothing until the delete
 // finishes.
 func TestDeleteActorWorkflow_RetryKeepsAdmission(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	objects := objectstoretest.New()
@@ -709,6 +719,7 @@ func TestDeleteActorWorkflow_RetryKeepsAdmission(t *testing.T) {
 // delete that lost its lease after another delete finished and the name was
 // recreated and resumed. The stale delete must leave the new Actor bound.
 func TestEnsureWorkerReleased_RecreatedActorKeepsAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	w := &ActorWorkflow{store: persistence}

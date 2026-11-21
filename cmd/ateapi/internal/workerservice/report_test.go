@@ -48,6 +48,7 @@ func reportRequest() *ateapi.ReportActorSnapshotStateRequest {
 // A report reaches the control plane with the node from the caller's
 // certificate. The handler reads nothing from the store.
 func TestReportActorSnapshotState(t *testing.T) {
+	t.Parallel()
 	control := &fakeControl{}
 	s := New(nil, control, testAteletSPIFFEID, nil, "", nil)
 
@@ -73,6 +74,7 @@ func TestReportActorSnapshotState(t *testing.T) {
 // A caller that isn't atelet, or a malformed request, doesn't reach the control
 // plane. A refusal from the control plane reaches atelet unchanged.
 func TestReportActorSnapshotState_Refused(t *testing.T) {
+	t.Parallel()
 	onNode := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, testNode))
 	invalid := reportRequest()
 	invalid.State = nil

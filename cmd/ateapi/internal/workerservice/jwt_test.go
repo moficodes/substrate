@@ -63,6 +63,7 @@ func decodeJWTClaims(t *testing.T, token string) actoridjwt.WireClaims {
 }
 
 func TestMintWorkerActorJwt(t *testing.T) {
+	t.Parallel()
 	st, actor := newFakeStoreWithActor("team-a", "my-actor", "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21")
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, testActorJWTIssuer, newTestJWTPool(t))
 
@@ -138,6 +139,7 @@ func uploadPendingStatus(node string) *ateapi.ActorStatus {
 }
 
 func TestMintWorkerActorJwt_Errors(t *testing.T) {
+	t.Parallel()
 	st, actor := newFakeStoreWithActor("team-a", "my-actor", "3b9f1e77-2c4d-4a80-91be-6d5c8f0a7e21")
 	s := New(st, &fakeControl{}, testAteletSPIFFEID, nil, testActorJWTIssuer, newTestJWTPool(t))
 	authed := ateletauthtest.ContextWith(ateletauthtest.CertOn(t, "node-1"))
@@ -336,6 +338,7 @@ func TestMintWorkerActorJwt_Errors(t *testing.T) {
 // TestNodeRefusalLogNamesCredential checks that each mint's node refusal logs
 // the credential that RPC mints.
 func TestNodeRefusalLogNamesCredential(t *testing.T) {
+	t.Setenv("ATE_LOG_RECORDS_SET_FOR_TEST", "1")
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))

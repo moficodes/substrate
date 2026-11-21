@@ -32,6 +32,7 @@ import (
 // TestListTags checks the atespace scoping and the paging of the
 // list handler.
 func TestListTags(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -108,6 +109,7 @@ func TestListTags(t *testing.T) {
 }
 
 func TestUpdateTag(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		stored   *ateapi.Tag
@@ -190,6 +192,7 @@ func TestUpdateTag(t *testing.T) {
 // uid nor a version is rejected. The schema does not require them — the store
 // does, because a caller that read nothing has nothing to lose a race with.
 func TestUpdateTag_BlindWrite(t *testing.T) {
+	t.Parallel()
 	svc, stored := rpcServiceWithTag(t, &ateapi.Tag{
 		Metadata: &ateapi.ResourceMetadata{Atespace: testAtespace, Name: "tag1"},
 		Scope:    ateapi.TagScope_TAG_SCOPE_ATESPACE,
@@ -206,6 +209,7 @@ func TestUpdateTag_BlindWrite(t *testing.T) {
 // TestUpdateTag_UnsetScopeDoesNotUnpublish checks that an update
 // leaving scope unset is rejected.
 func TestUpdateTag_UnsetScopeDoesNotUnpublish(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	svc, stored := rpcServiceWithTag(t, &ateapi.Tag{
 		Metadata: &ateapi.ResourceMetadata{Atespace: testAtespace, Name: "tag1"},
@@ -307,6 +311,7 @@ func rpcServiceWithTag(t *testing.T, tag *ateapi.Tag) (*RPCService, *ateapi.Tag)
 // TestUpdateTag_DeleteRecreateRace checks that an update is not
 // applied if a tag was deleted and re-created during the update operation.
 func TestUpdateTag_DeleteRecreateRace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -364,6 +369,7 @@ func TestUpdateTag_DeleteRecreateRace(t *testing.T) {
 // absorbed. Every update guards on a version, so there is no unguarded update left
 // for the server to resolve on the client's behalf.
 func TestUpdateTag_ConcurrentUpdate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -414,6 +420,7 @@ func TestUpdateTag_ConcurrentUpdate(t *testing.T) {
 // finished cannot be published: it names a copy that may be partial, so it must
 // not become usable until the create completes.
 func TestUpdateTag_PendingTag(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -440,6 +447,7 @@ func TestUpdateTag_PendingTag(t *testing.T) {
 // TestUpdateTagStatus checks that ServiceImpl lets a write complete a pending
 // tag's snapshot, and rejects writes that repoint it.
 func TestUpdateTagStatus(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)

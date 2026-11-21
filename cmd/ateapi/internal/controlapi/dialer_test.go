@@ -157,6 +157,7 @@ func dialerWithAtelets(t *testing.T, pods ...*corev1.Pod) *AteletDialer {
 }
 
 func TestDialForAteletOnNodeTarget(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		ateletIP   string
@@ -202,6 +203,7 @@ func TestDialForAteletOnNodeTarget(t *testing.T) {
 }
 
 func TestDialForAteletOnNodeNoIPs(t *testing.T) {
+	t.Parallel()
 	ateletPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: installdefaults.SystemNamespace, Name: "atelet-abc", UID: "atelet-uid"},
 		Spec:       corev1.PodSpec{NodeName: "node-1"},
@@ -213,6 +215,7 @@ func TestDialForAteletOnNodeNoIPs(t *testing.T) {
 }
 
 func TestVerifyAteletServerCert(t *testing.T) {
+	t.Parallel()
 	ca, caKey, bundle := makeTestCA(t)
 	otherCA, otherCAKey, _ := makeTestCA(t)
 
@@ -316,6 +319,7 @@ func nodeGetter(lookupErr error, names ...string) func(context.Context, string) 
 }
 
 func TestNodeGone(t *testing.T) {
+	t.Parallel()
 	spiffeID := installdefaults.AteletSPIFFEID(installdefaults.SystemNamespace)
 	atelet := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ate-system", Name: "atelet-1"},
@@ -361,6 +365,7 @@ func newTestAteletIndexer(t *testing.T, pods ...*corev1.Pod) cache.Indexer {
 }
 
 func TestDialForAteletOnNode(t *testing.T) {
+	t.Parallel()
 	ateletPod := func(name, uid, node, ip string) *corev1.Pod {
 		return &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "ate-system", Name: name, UID: types.UID(uid)},

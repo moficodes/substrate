@@ -26,6 +26,7 @@ import (
 )
 
 func TestMapAccessPolicyWrite_Codes(t *testing.T) {
+	t.Parallel()
 	// OpenFGA reports tuple validation failures with nonstandard codes such as 2000.
 	openFGAErr := status.Error(codes.Code(2000), "invalid tuple")
 

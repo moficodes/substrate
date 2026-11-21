@@ -39,6 +39,7 @@ func crashRequest(actorUID string) *ateapi.ReportActorCrashedRequest {
 }
 
 func TestReportActorCrashed(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	seedReportedWorker(t, st, testNode, &ateapi.WorkerResources{Actors: 1})
@@ -62,6 +63,7 @@ func TestReportActorCrashed(t *testing.T) {
 }
 
 func TestReportActorCrashed_Refused(t *testing.T) {
+	t.Parallel()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	seedReportedWorker(t, st, testNode, &ateapi.WorkerResources{Actors: 1})

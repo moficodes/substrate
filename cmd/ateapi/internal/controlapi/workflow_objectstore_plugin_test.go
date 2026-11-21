@@ -42,6 +42,7 @@ func (p failingControlPlugin) CopySnapshot(context.Context, *objectstore.CopySna
 // A control object-store plugin that cannot be reached fails the request with
 // Unavailable, which a client retries; other plugin errors stay Internal.
 func TestObjectStorePluginErrorCodeToClient(t *testing.T) {
+	t.Parallel()
 	prefix, err := resources.ParseStoragePrefix("gs://bucket/root/atespaces/team-a/actors/uid1/snapshots/snap1")
 	if err != nil {
 		t.Fatal(err)

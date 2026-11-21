@@ -27,6 +27,7 @@ import (
 )
 
 func TestActorEgressPolicy(t *testing.T) {
+	t.Parallel()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
 	service := &RPCService{impl: &ServiceImpl{store: persistence}}

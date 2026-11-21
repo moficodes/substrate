@@ -89,6 +89,7 @@ func seedAPIActor(t *testing.T, ctx context.Context, persistence store.Interface
 // around, so the
 // state it held during the sweep can be read.
 func TestDeleteWorkerWorkflow_DrainsBeforeSweeping(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	_, persistence := newWorkerDeleteWorkflow(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -111,6 +112,7 @@ func TestDeleteWorkerWorkflow_DrainsBeforeSweeping(t *testing.T) {
 }
 
 func TestDeleteWorkerWorkflow_ReleasesBoundActor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	wf, persistence := newWorkerDeleteWorkflow(t)
 	seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -174,9 +176,7 @@ func TestDeleteWorkerWorkflow_ReleasedActorStateTransitions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := sdkmetric.NewManualReader()
-			if err := RegisterActorCrashes(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("ateapi")); err != nil {
-				t.Fatalf("RegisterActorCrashes: %v", err)
-			}
+			registerActorCrashesForTest(t, sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("ateapi"))
 
 			ctx := context.Background()
 			wf, persistence := newWorkerDeleteWorkflow(t)
@@ -212,6 +212,7 @@ func TestDeleteWorkerWorkflow_ReleasedActorStateTransitions(t *testing.T) {
 // row alone, and the delete fails as INTERNAL instead of a retryable code,
 // keeping the Worker and leaving any Actor untouched.
 func TestDeleteWorkerWorkflow_LeftoverAssignmentFails(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		seed func(t *testing.T, ctx context.Context, persistence store.Interface)
@@ -270,6 +271,7 @@ func TestDeleteWorkerWorkflow_LeftoverAssignmentFails(t *testing.T) {
 // erases the Actor's pointer at it, so the record has to stay findable for the
 // caller to rediscover and retry.
 func TestDeleteWorkerWorkflow_FailedReleaseKeepsWorker(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		updateErr  error
@@ -345,6 +347,7 @@ func TestDeleteWorkerWorkflow_FailedReleaseKeepsWorker(t *testing.T) {
 // branches on intact — the worker-pod syncer reads NOT_FOUND off this call to
 // decide a deregistration is already done.
 func TestDeleteWorkerWorkflow_AbsentReportsNotFoundThroughStepWrap(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	wf, _ := newWorkerDeleteWorkflow(t)
 
@@ -373,6 +376,7 @@ func (f failingUpdateActorStore) UpdateActorAndRelease(context.Context, resource
 }
 
 func TestDeleteWorkerWorkflow_DrainedWorkerIsStillAdmitted(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	wf, persistence := newWorkerDeleteWorkflow(t)
 	worker := seedAPIWorker(t, ctx, persistence, validWorker(apiWorkerName))
@@ -403,6 +407,7 @@ func TestDeleteWorkerWorkflow_DrainedWorkerIsStillAdmitted(t *testing.T) {
 // with it, leaving the actor's state directory on the node. This delete
 // reclaims it ahead of the actor's revert or delete.
 func TestDeleteWorkerWorkflow_ReclaimsActorNodeState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		// state the actor is in when its pod disappears.
@@ -481,6 +486,7 @@ func TestDeleteWorkerWorkflow_ReclaimsActorNodeState(t *testing.T) {
 // left alone and the delete fails ABORTED for a retry. Once it is free no
 // suspend is running and the release reclaims and crashes the actor.
 func TestDeleteWorkerWorkflow_ReleasesUnderTheActorLease(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -533,6 +539,7 @@ func TestDeleteWorkerWorkflow_ReleasesUnderTheActorLease(t *testing.T) {
 // worker's actors: they are reclaimed and crashed in the same call, which then
 // fails ABORTED so the delete is retried for the busy one.
 func TestDeleteWorkerWorkflow_BusyActorDoesNotHoldUpOthers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence, cleanup := storetest.SetupTestStore(t)
 	t.Cleanup(cleanup)
@@ -587,6 +594,7 @@ func TestDeleteWorkerWorkflow_BusyActorDoesNotHoldUpOthers(t *testing.T) {
 // node within w.reclaimTimeout, leave theirs to their revert or delete. Once
 // w.reclaimTimeout elapses, a later delete tries the node again.
 func TestDeleteWorkerWorkflow_HungReclaimDoesNotWedgeDelete(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name string
 		hang bool

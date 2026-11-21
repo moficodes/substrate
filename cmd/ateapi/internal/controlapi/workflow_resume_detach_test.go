@@ -75,6 +75,7 @@ func detachedState(snap *ateapi.Snapshot) *ateletpb.ActorSnapshotState {
 }
 
 func TestShouldDetachFromNode(t *testing.T) {
+	t.Parallel()
 	noRoom := apierror.ResourceExhausted("%w", errNoWorkerRoom)
 	pinned := func(state ateapi.ActorState, node string) *ateapi.Actor {
 		return &ateapi.Actor{Status: &ateapi.ActorStatus{State: state, AssignedNode: node}}
@@ -103,6 +104,7 @@ func TestShouldDetachFromNode(t *testing.T) {
 
 // TestDetachFromFullNode runs the step for an actor pinned to a full node.
 func TestDetachFromFullNode(t *testing.T) {
+	t.Parallel()
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}
 	suspended := ateapi.ActorState_ACTOR_STATE_SUSPENDED
 	const uuid = "pause-snap-1"
@@ -505,6 +507,7 @@ func TestDetachFromFullNode(t *testing.T) {
 // writes one scheduler record, unless the detach fails after its scheduler
 // check.
 func TestResumeActor_DetachesFromFullNode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		node1     bool
@@ -644,6 +647,7 @@ func TestResumeActor_DetachesFromFullNode(t *testing.T) {
 // finds no upload, the actor crashes, a revert returns it to its older durable
 // snapshot, and the next resume restores that one.
 func TestResumeActor_NodeGoneWithPendingUpload(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name string
 		// assignedNode is node-3, the deleted node, or empty when an earlier
@@ -784,6 +788,7 @@ func addAteletOnNode(t *testing.T, w *ActorWorkflow, node string) {
 // to a concurrent update, then runs the step again, as the next resume does:
 // the second attempt detaches again and records the detach.
 func TestDetachFromFullNode_ReentryRecordsAfterConflict(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st := newTestPersistence(t)
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}

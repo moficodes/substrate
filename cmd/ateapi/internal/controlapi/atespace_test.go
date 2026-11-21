@@ -48,6 +48,7 @@ func withAtespaceMetadata(mutate func(*ateapi.ResourceMetadata)) func(*ateapi.At
 }
 
 func TestAtespace_EndToEndOpenFGAScenarios(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := storetest.SetupPostgresPersistence(t)
 	pool := persistence.Pool()

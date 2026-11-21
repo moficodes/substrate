@@ -40,6 +40,7 @@ import (
 // holds a node-local snapshot is accepted; see
 // TestEnsureMarkedReverting_AcceptsPaused.
 func TestEnsureMarkedReverting_StateMatrix(t *testing.T) {
+	t.Parallel()
 	allowed := map[ateapi.ActorState]bool{
 		ateapi.ActorState_ACTOR_STATE_RUNNING: true,
 		ateapi.ActorState_ACTOR_STATE_CRASHED: true,
@@ -75,6 +76,7 @@ func TestEnsureMarkedReverting_StateMatrix(t *testing.T) {
 // latest snapshot is node-local takes the revert edge: the revert discards that
 // local copy and returns the actor to its durable snapshot.
 func TestEnsureMarkedReverting_AcceptsPaused(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
@@ -104,6 +106,7 @@ func TestEnsureMarkedReverting_AcceptsPaused(t *testing.T) {
 // exercised here; it needs the atelet rig, and the unit workflow is built with
 // a nil dialer on purpose so an unexpected dial fails loudly.
 func TestRevertActor_ReturnsActorToItsSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		seedState ateapi.ActorState
@@ -224,6 +227,7 @@ func TestRevertActor_ReturnsActorToItsSnapshot(t *testing.T) {
 }
 
 func TestRevertActor_UnreachableNode(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name     string
 		node     string
@@ -342,6 +346,7 @@ func TestRevertActor_UnreachableNode(t *testing.T) {
 // upload replaced. The actor has no assigned node, so there is nothing to
 // terminate, as in TestRevertActor_ReturnsActorToItsSnapshot.
 func TestRevertActor_PausedSnapshotAlreadyUploaded(t *testing.T) {
+	t.Parallel()
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
 	ctx := context.Background()
@@ -394,6 +399,7 @@ func TestRevertActor_PausedSnapshotAlreadyUploaded(t *testing.T) {
 // finished. Both are FailedPrecondition — revert is not a no-op success on its
 // own destination, for the same reason a second DeleteActor is NotFound.
 func TestRevertActor_RejectsSuspended(t *testing.T) {
+	t.Parallel()
 	t.Run("actor was already suspended", func(t *testing.T) {
 		ctx := context.Background()
 		st, cleanup := storetest.SetupTestStore(t)
@@ -430,6 +436,7 @@ func TestRevertActor_RejectsSuspended(t *testing.T) {
 // recover: an actor whose template was deleted. Suspend refuses this actor
 // outright, so revert must not, or the only way out would be deletion.
 func TestRevertActor_MissingTemplate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
@@ -452,6 +459,7 @@ func TestRevertActor_MissingTemplate(t *testing.T) {
 // nothing to return it to. That is accepted, not an error — the actor resumes
 // from its template as a fresh one.
 func TestRevertActor_NoSnapshotToRevertTo(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
@@ -483,6 +491,7 @@ func TestRevertActor_NoSnapshotToRevertTo(t *testing.T) {
 // actor's whole prefix; revert cannot, because the snapshot it is returning the
 // actor to lives under that same prefix.
 func TestEnsureInProgressSnapshotDiscarded(t *testing.T) {
+	t.Parallel()
 	const inFlightSnapshotName = "2026-01-01t00-00-00z-abandoned"
 	const earlierPauseSnapshotName = "2025-12-31t00-00-00z-earlier-pause"
 
@@ -635,6 +644,7 @@ func TestEnsureInProgressSnapshotDiscarded(t *testing.T) {
 // object store: the discard step skips instead of failing, so the revert still
 // finalizes.
 func TestEnsureRevertedFinalized_NoObjectStore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	w := &ActorWorkflow{store: persistence}
@@ -676,6 +686,7 @@ func TestEnsureRevertedFinalized_NoObjectStore(t *testing.T) {
 // another revert finished and a resume bound the actor to a worker. The stale
 // revert must leave that worker assignment alone.
 func TestRevertActor_LostLeaseKeepsNewAssignment(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	w := &ActorWorkflow{store: persistence}

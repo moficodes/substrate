@@ -38,6 +38,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -123,6 +124,7 @@ func assertCrashed(t *testing.T, ctx context.Context, st store.Interface, actorR
 }
 
 func TestCrashActor(t *testing.T) {
+	t.Parallel()
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 
 	tests := []struct {
@@ -258,6 +260,7 @@ func TestCrashActor(t *testing.T) {
 }
 
 func TestCrashActor_RecordsCrash(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	st, cleanup := storetest.SetupTestStore(t)
 	defer cleanup()
@@ -294,6 +297,7 @@ func TestCrashActor_RecordsCrash(t *testing.T) {
 }
 
 func TestAteletCrashMessage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -320,6 +324,7 @@ func TestAteletCrashMessage(t *testing.T) {
 }
 
 func TestHandleAteletError(t *testing.T) {
+	t.Parallel()
 	ended, cancel := context.WithCancel(context.Background())
 	cancel()
 	expired, cancelExpired := context.WithDeadline(context.Background(), time.Unix(0, 0))
@@ -465,6 +470,7 @@ func TestHandleAteletError(t *testing.T) {
 }
 
 func TestNewActorCrash(t *testing.T) {
+	t.Parallel()
 	const resumeOpPrefix = "resume failed: "
 	tests := []struct {
 		name    string
@@ -512,13 +518,20 @@ func TestNewActorCrash(t *testing.T) {
 	}
 }
 
-func TestCrashActor_Metrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	meter := mp.Meter("test")
+func registerActorCrashesForTest(t *testing.T, meter metric.Meter) {
+	t.Helper()
+	t.Setenv("ATE_CRASH_METRICS_SET_FOR_TEST", "1")
+	prev := actorCrashesCounter
 	if err := RegisterActorCrashes(meter); err != nil {
 		t.Fatalf("RegisterActorCrashes: %v", err)
 	}
+	t.Cleanup(func() { actorCrashesCounter = prev })
+}
+
+func TestCrashActor_Metrics(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	registerActorCrashesForTest(t, mp.Meter("test"))
 
 	ctx := context.Background()
 	st, cleanup := storetest.SetupTestStore(t)
@@ -647,6 +660,7 @@ func (f failingCrashStore) UpdateActorAndRelease(context.Context, resources.Acto
 // can finish the step, but the crash's own error when it does not, leaving the
 // actor as it was so the caller retries and the retry crashes it.
 func TestCrashActorAndFail(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
 
@@ -718,6 +732,7 @@ type stdoutRecord struct {
 // logRecords captures every record with the given message.
 func logRecords(t *testing.T, msg string) *[]stdoutRecord {
 	t.Helper()
+	t.Setenv("ATE_LOG_RECORDS_SET_FOR_TEST", "1")
 
 	var records []stdoutRecord
 	prev := slog.Default()
@@ -792,6 +807,7 @@ func (otlpSinkExporter) ForceFlush(context.Context) error { return nil }
 // this makes the caller non-parallel.
 func otlpEvents(t *testing.T) func() []otlpEvent {
 	t.Helper()
+	t.Setenv("ATE_OTLP_EVENTS_SET_FOR_TEST", "1")
 
 	otlpSinkOnce.Do(func() {
 		global.SetLoggerProvider(sdklog.NewLoggerProvider(
@@ -848,9 +864,7 @@ func assertEvent(t *testing.T, otlp otlpEvent, ev actorevent.Event) {
 // one logged but not counted double-counts on a retry.
 func TestCrashActor_RecordAndCounterAgree(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
-	if err := RegisterActorCrashes(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test")); err != nil {
-		t.Fatalf("RegisterActorCrashes: %v", err)
-	}
+	registerActorCrashesForTest(t, sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)).Meter("test"))
 	records := crashRecords(t)
 	events := otlpEvents(t)
 

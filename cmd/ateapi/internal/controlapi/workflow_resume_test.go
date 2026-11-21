@@ -59,6 +59,7 @@ import (
 // wrapped) must not be recorded, while the terminal success or real error
 // must be.
 func TestSchedulerRecordable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -91,6 +92,7 @@ func (s *leaseCountingStore) AcquireLease(ctx context.Context, key string) (*sto
 }
 
 func TestResumeActor_RunningFastPathDoesNotAcquireLease(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	created := storetest.MustCreateActor(t, ctx, persistence, &ateapi.Actor{
@@ -160,6 +162,7 @@ func seedFinalizeActor(t *testing.T, ctx context.Context, persistence store.Inte
 // locality of the local snapshot it restored from: resume does not delete the
 // snapshot's files from the node.
 func TestFinalizeRunning_CommitsRunning(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	seedFinalizeActor(t, ctx, persistence, 1, []string{"10.0.0.1"})
@@ -181,6 +184,7 @@ func TestFinalizeRunning_CommitsRunning(t *testing.T) {
 // worker process, is stamped with that process's epoch and the IPs it
 // registered, so the reconciler keeps it and traffic reaches it.
 func TestFinalizeRunning_StampsReportedEpochAndIPs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	seedFinalizeActor(t, ctx, persistence, 2, []string{"10.0.0.2"})
@@ -203,6 +207,7 @@ func TestFinalizeRunning_StampsReportedEpochAndIPs(t *testing.T) {
 // deleted left no sandbox behind, so RUNNING is not committed and the resume
 // is retried.
 func TestFinalizeRunning_ReplacedWorkerProcess(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		reported int64
@@ -244,6 +249,7 @@ func TestFinalizeRunning_ReplacedWorkerProcess(t *testing.T) {
 // A restore from the upload of a snapshot on a deleted node commits RUNNING
 // even when the record can't take the upload, since the workload already runs.
 func TestFinalizeRunning_UnrecordableUploadStillRuns(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	ref := resources.ActorRef{Atespace: "team-a", Name: "id1"}
@@ -271,6 +277,7 @@ func TestFinalizeRunning_UnrecordableUploadStillRuns(t *testing.T) {
 }
 
 func TestRecordRestoredUpload(t *testing.T) {
+	t.Parallel()
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	pending := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_PENDING
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
@@ -330,6 +337,7 @@ func (s *bindErrorStore) BindActorToWorker(context.Context, string, *ateapi.Acto
 // TestAssignWorkerAttempt_BindNotFound covers a bind that finds the picked
 // Worker or the Actor gone. Only a gone Worker is forgotten and retried.
 func TestAssignWorkerAttempt_BindNotFound(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		bindErr error
@@ -368,6 +376,7 @@ func TestAssignWorkerAttempt_BindNotFound(t *testing.T) {
 }
 
 func TestEnsureWorkerAssigned_ConflictExhaustionIsRetryable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	actor, wc := seedAssignFixture(t, ctx, persistence)
@@ -382,6 +391,7 @@ func TestEnsureWorkerAssigned_ConflictExhaustionIsRetryable(t *testing.T) {
 }
 
 func TestAssignWorkerAttempt_SkipsWorkerAssignedInOtherAtespace(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 
@@ -437,6 +447,7 @@ func TestAssignWorkerAttempt_SkipsWorkerAssignedInOtherAtespace(t *testing.T) {
 // snapshot that records no upload fails the resume before a worker is claimed,
 // so the actor stays SUSPENDED and the worker stays free.
 func TestEnsureWorkerAssigned_MissingUploadClaimsNoWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 
@@ -501,6 +512,7 @@ func TestEnsureWorkerAssigned_MissingUploadClaimsNoWorker(t *testing.T) {
 // the cache instead of re-submitting the same stale version until the backoff
 // is exhausted.
 func TestAssignWorkerAttempt_RetryAfterConflictPicksFreshWorker(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 
@@ -743,6 +755,7 @@ func TestAssignWorkerAttempt_ConflictRefreshesActor(t *testing.T) {
 // short-circuit paths of the resume workflow: rejection of the resume edge
 // for a non-resumable actor and the idempotent fast-forward for a RUNNING one.
 func TestResumeActorWorkflow_RejectedAndIdempotentPaths(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		seedState ateapi.ActorState
@@ -827,6 +840,7 @@ func TestResumeActorWorkflow_RejectedAndIdempotentPaths(t *testing.T) {
 // assignment-attempt and worker-validation tests; RUNNING never reaches this
 // step because the orchestrator early-returns.)
 func TestEnsureWorkerAssigned_RejectsNonResumableStates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	w := &ActorWorkflow{}
 	for _, st := range allActorStates {
@@ -844,6 +858,7 @@ func TestEnsureWorkerAssigned_RejectsNonResumableStates(t *testing.T) {
 // router resumes per routed request, so a clean already-running no-op must not
 // be recorded, while failures must be.
 func TestResumeActor_MetricSkipsAlreadyRunningNoop(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		seedState  ateapi.ActorState
@@ -892,6 +907,7 @@ func TestResumeActor_MetricSkipsAlreadyRunningNoop(t *testing.T) {
 // the actor, releasing its assignment, when the worker can never take it back,
 // and leaves an actor that has moved on since it was read alone.
 func TestValidateAssignedWorker(t *testing.T) {
+	t.Parallel()
 	activeStatus := registered(&ateapi.WorkerStatus{
 		State:          ateapi.WorkerState_WORKER_STATE_ACTIVE,
 		Capacity:       &ateapi.WorkerResources{Actors: 1},
@@ -1070,6 +1086,7 @@ func TestValidateAssignedWorker(t *testing.T) {
 }
 
 func TestLoadActorForResume_RunningActorShortCircuits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	persistence := newTestPersistence(t)
 	actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}
@@ -1323,6 +1340,7 @@ func newNodeAteletDialer(t *testing.T, srvImpl ateletpb.AteletServer) *AteletDia
 // The rows are ordered strictly by input columns (local → external → tmplUID →
 // golden) so a missing permutation is visible by scanning.
 func TestResumeActor_AteletWireRequest(t *testing.T) {
+	t.Parallel()
 	const localSnapshotName = "pause-snap-1"
 	// durableSnapshotName is the uuid of every durable snapshot a row seeds.
 	const durableSnapshotName = "snap-1"
@@ -2074,6 +2092,7 @@ func (p *createCountingVolumePlugin) CreateVolume(ctx context.Context, req volum
 
 // An actor being deleted gets no volume provisioned by a resume.
 func TestEnsureVolumesCreated(t *testing.T) {
+	t.Parallel()
 	tmpl := &ateapi.ActorTemplate{
 		Volumes: []*ateapi.Volume{{
 			Name:     "data",
@@ -2323,6 +2342,7 @@ func newContendedWorkflow(t *testing.T, sched *filledUpScheduler) (*ActorWorkflo
 // retried attempt must not reach the histogram. Losing that race is a
 // capacity condition, and the registry says a lack of room is not a failure.
 func TestEnsureWorkerAssigned_ContentionRecordsOneObservation(t *testing.T) {
+	t.Parallel()
 	sched := &filledUpScheduler{
 		workers: []*ateapi.Worker{contendedWorker("full-pod"), contendedWorker("free-pod")},
 		full:    map[string]bool{"full-pod": true},
@@ -2357,6 +2377,7 @@ func TestEnsureWorkerAssigned_ContentionRecordsOneObservation(t *testing.T) {
 // the same error, also records Aborted. The record times the last attempt and
 // not the backoff, as every other record on the histogram does.
 func TestEnsureWorkerAssigned_ExhaustedBackoffRecordsOneError(t *testing.T) {
+	t.Parallel()
 	sched := &filledUpScheduler{
 		workers: []*ateapi.Worker{contendedWorker("full-pod")},
 		full:    map[string]bool{"full-pod": true},
@@ -2413,6 +2434,7 @@ func replayBackoff(t *testing.T, b wait.Backoff) (attempts int, lastSleep time.D
 // no trace on the histogram without the one record the loop writes. That
 // record times the attempt that lost the race, not the context check after it.
 func TestEnsureWorkerAssigned_CancelledDuringBackoffRecordsOne(t *testing.T) {
+	t.Parallel()
 	sched := &filledUpScheduler{
 		workers: []*ateapi.Worker{contendedWorker("full-pod")},
 		full:    map[string]bool{"full-pod": true},
@@ -2454,6 +2476,7 @@ func TestEnsureWorkerAssigned_CancelledDuringBackoffRecordsOne(t *testing.T) {
 // context that ended before the loop began. No attempt ran, so there is no
 // attempt to time and the histogram gets no record.
 func TestEnsureWorkerAssigned_CancelledBeforeFirstAttemptRecordsNothing(t *testing.T) {
+	t.Parallel()
 	sched := &filledUpScheduler{
 		workers: []*ateapi.Worker{contendedWorker("free-pod")},
 	}
@@ -2479,6 +2502,7 @@ func TestEnsureWorkerAssigned_CancelledBeforeFirstAttemptRecordsNothing(t *testi
 // its own timeout, but the caller went away, so the resume reports the
 // context error and not that the retries ran out.
 func TestEnsureWorkerAssigned_CancelledInLastSleepRecordsOne(t *testing.T) {
+	t.Parallel()
 	sched := &filledUpScheduler{
 		workers: []*ateapi.Worker{contendedWorker("full-pod")},
 		full:    map[string]bool{"full-pod": true},
@@ -2517,6 +2541,7 @@ func TestEnsureWorkerAssigned_CancelledInLastSleepRecordsOne(t *testing.T) {
 // itself, so the loop must not add a second record, and the caller gets the
 // context error and not Aborted.
 func TestEnsureWorkerAssigned_ContextEndsInsideAttemptRecordsOne(t *testing.T) {
+	t.Parallel()
 	sched := &filledUpScheduler{
 		workers: []*ateapi.Worker{contendedWorker("free-pod")},
 		err:     fmt.Errorf("list workers: %w", context.DeadlineExceeded),
@@ -2545,6 +2570,7 @@ func TestEnsureWorkerAssigned_ContextEndsInsideAttemptRecordsOne(t *testing.T) {
 // that finds no room. An actor larger than every worker records error. A pinned
 // actor records nothing, because detachFromFullNode records it.
 func TestEnsureWorkerAssigned_CapacityOutcome(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		assignedNode string
@@ -2749,6 +2775,7 @@ func (s *relaxingTestScheduler) Schedule(_ context.Context, c scheduling.Constra
 }
 
 func TestAssignWorkerAttempt_PrefersRuntimeMatchingWorkerAndFallsBack(t *testing.T) {
+	t.Parallel()
 	amd64RT := testSandboxRuntime()
 	arm64RT := testRuntime("arm64", "")
 	// Two runtimes of one architecture that differ only by binary: a
@@ -2904,6 +2931,7 @@ func TestAssignWorkerAttempt_PrefersRuntimeMatchingWorkerAndFallsBack(t *testing
 }
 
 func TestValidateAssignedWorker_RuntimeFallback(t *testing.T) {
+	t.Parallel()
 	t.Run("accepts fallback worker on re-entry for durable snapshot", func(t *testing.T) {
 		ctx := context.Background()
 		st := newTestPersistence(t)
@@ -2992,6 +3020,7 @@ func TestValidateAssignedWorker_RuntimeFallback(t *testing.T) {
 // TestRequiredSnapshotRuntime pins which snapshot a resume takes its sandbox
 // class and runtime constraint from, and when it takes no runtime constraint.
 func TestRequiredSnapshotRuntime(t *testing.T) {
+	t.Parallel()
 	const tmplUID = "tmpl-uid"
 	tmpl := &ateapi.ActorTemplate{Metadata: &ateapi.ResourceMetadata{Uid: tmplUID}}
 	localRT := testRuntime("amd64", "paused-under")
@@ -3284,6 +3313,7 @@ func TestResume_ChecksMountedVolumesBeforeAttach(t *testing.T) {
 // TestCanRelaxRuntime pins when a resume may drop its runtime constraint: only
 // when it has one, and never while a local pause checkpoint pins the actor.
 func TestCanRelaxRuntime(t *testing.T) {
+	t.Parallel()
 	rt := testSandboxRuntime()
 	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
 	completed := ateapi.SnapshotStorageState_SNAPSHOT_STORAGE_STATE_COMPLETED
@@ -3432,6 +3462,7 @@ func TestCanRelaxRuntime(t *testing.T) {
 // atenet-router requires the assignment's SPIFFE ID on atunnel's certificate,
 // so the worker's has to reach it.
 func TestWorkerAssignmentFromCopiesSPIFFEID(t *testing.T) {
+	t.Parallel()
 	const id = "spiffe://cluster.local/ns/workers/sa/substrate-worker"
 	got := workerAssignmentFrom(&ateapi.Worker{WorkerSpiffeId: id}, hardware.Requirement{})
 	if got.GetWorkerSpiffeId() != id {
@@ -3440,6 +3471,7 @@ func TestWorkerAssignmentFromCopiesSPIFFEID(t *testing.T) {
 }
 
 func TestToAteletSandboxRuntime(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   *ateapi.ActorSandboxRuntime
@@ -3488,6 +3520,7 @@ func TestToAteletSandboxRuntime(t *testing.T) {
 // with no node name is not claimed: the attempt fails with FailedPrecondition
 // before the bind, leaving no worker claim and no actor write.
 func TestAssignWorkerAttempt_WorkerWithoutNodeRejectsVolumes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		mounted []string
@@ -3536,6 +3569,7 @@ func TestAssignWorkerAttempt_WorkerWithoutNodeRejectsVolumes(t *testing.T) {
 // it is refused under its row lock, so what the assignment records is what
 // admit checked.
 func TestAssignWorkerAttempt_RefusesChangedOverhead(t *testing.T) {
+	t.Parallel()
 	cached := contendedWorker("pod-a")
 	cached.Status.SandboxClasses[0].DefaultRuntime.ActorOverhead = &ateapi.RuntimeOverhead{MemoryBytes: 4 << 20}
 	sched := &filledUpScheduler{workers: []*ateapi.Worker{cached}}
