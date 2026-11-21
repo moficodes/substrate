@@ -19,9 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,17 +33,7 @@ import (
 // subcommands run inside the worker's PID namespace.
 func testserverImage(t *testing.T) string {
 	t.Helper()
-	manifest := filepath.Join(t.TempDir(), "image.yaml")
-	if err := os.WriteFile(manifest, []byte("image: ko://go.ate.dev/substrate/internal/e2e/fixtures/testserver\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// the first line; ko appends a document separator
-	line, _, _ := strings.Cut(string(koResolve(t, manifest)), "\n")
-	image := strings.TrimSpace(strings.TrimPrefix(line, "image:"))
-	if image == "" {
-		t.Fatal("ko resolved no testserver image")
-	}
-	return image
+	return ResolveFixtureImage(t, "go.ate.dev/substrate/internal/e2e/fixtures/testserver")
 }
 
 // KillActorSandbox kills the actor's sandbox processes on its worker, the way a

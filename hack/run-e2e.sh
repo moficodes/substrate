@@ -175,6 +175,29 @@ if [[ -z "${E2E_JUNIT_FILE:-}" && "${CI:-}" == "true" ]]; then
     exit 1
 fi
 
+# Build and publish the shared fixture and worker images once so the per-suite
+# test binaries rewrite ko:// references without invoking ko per test. Direct
+# `go test` runs without E2E_KO_IMAGES fall back to resolving once per binary.
+if [[ -n "${KO_DOCKER_REPO:-}" && -z "${E2E_KO_IMAGES:-}" && ( "${target_path}" == "./internal/e2e/suites"* || "${target_path}" == "internal/e2e/suites"* ) ]]; then
+    worker_pkg="go.ate.dev/substrate/cmd/ateworker-gvisor"
+    if [[ "${E2E_SANDBOX_CLASS:-}" == "microvm" ]]; then
+        worker_pkg="go.ate.dev/substrate/cmd/ateworker-microvm"
+    fi
+    default_images=""
+    default_images="$(KO_CONFIG_PATH="${ROOT}" "${ROOT}/hack/run-tool.sh" ko resolve -f - <<EOF
+${worker_pkg}: ko://${worker_pkg}
+go.ate.dev/substrate/internal/e2e/fixtures/probe: ko://go.ate.dev/substrate/internal/e2e/fixtures/probe
+go.ate.dev/substrate/internal/e2e/fixtures/testserver: ko://go.ate.dev/substrate/internal/e2e/fixtures/testserver
+EOF
+)"
+    nonroot_images=""
+    nonroot_images="$(KO_CONFIG_PATH="${ROOT}" "${ROOT}/hack/run-tool.sh" ko resolve --image-user nonroot:nonroot -f - <<'EOF'
+"go.ate.dev/substrate/internal/e2e/fixtures/probe/nonroot|nonroot:nonroot": ko://go.ate.dev/substrate/internal/e2e/fixtures/probe/nonroot
+EOF
+)"
+    export E2E_KO_IMAGES="${default_images}"$'\n'"${nonroot_images}"
+fi
+
 # E2E_JUNIT_FILE opts into a machine-readable record of the run: the XML for
 # report consumers, the JSON event stream for failure analysis. Unset, this is a
 # plain go test and gotestsum is never built, so a local run needs no toolchain
