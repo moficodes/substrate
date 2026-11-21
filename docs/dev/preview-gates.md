@@ -133,9 +133,10 @@ Test gated code both with and without the gate.
   hack/run-e2e-kind.sh -v -args --preview=ALL
   ```
 
-  CI runs every e2e lane with preview gates both off and on, and requires
-  `--preview` to be passed (even as empty) so a lane cannot silently skip
-  every preview test.
+  CI runs the default e2e lanes with `--preview=""` across every suite, and the
+  preview lanes with `--preview-only` and `--preview=ALL`. `--preview` must be
+  passed in CI (even as empty) so a lane cannot silently skip every preview
+  test.
 
 ## Graduating or removing a gate
 

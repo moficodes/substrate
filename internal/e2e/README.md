@@ -89,10 +89,12 @@ syntax as `ATE_PREVIEW` and should match what the cluster was installed with:
 
 ```shell
 $ hack/run-e2e-kind.sh -v -args --no-color --preview=ALL
+$ hack/run-e2e-kind.sh --preview-only -v -args --no-color --preview=ALL
 ```
 
-Unset or empty means no gates. CI must pass it, even if only as empty, so a
-lane that forgets cannot silently skip every preview test; see
+`--preview-only` runs only the suites and tests affected by preview gates.
+Unset or empty `--preview` means no gates. CI must pass it, even if only as
+empty, so a lane that forgets cannot silently skip every preview test; see
 [preview.go](preview.go).
 
 ## GCS-only suites
