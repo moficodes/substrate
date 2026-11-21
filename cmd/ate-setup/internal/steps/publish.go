@@ -16,13 +16,20 @@ package steps
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	stdlog "log"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/registry"
+
+	"go.ate.dev/substrate/cmd/ate-setup/internal/config"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/images"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/ko"
 	"go.ate.dev/substrate/cmd/ate-setup/internal/log"
@@ -272,6 +279,109 @@ func (e *Env) PublishReleaseImages(ctx context.Context, w io.Writer, opts Publis
 		return fmt.Errorf("after publishing, %d tag(s) do not name the pushed image:\n  %s", len(stale), strings.Join(stale, "\n  "))
 	}
 	if _, err := fmt.Fprintf(w, "\nRelease images for %s:\n", tag); err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if _, err := fmt.Fprintln(w, ref); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SaveImages builds every installable component image into an in-process
+// registry and writes a deduplicated OCI image layout directory to outDir.
+// When the configured dataplane uses Envoy, envoy-dataplane is built and
+// archived alongside images.Components.
+func (e *Env) SaveImages(ctx context.Context, w io.Writer, outDir string) error {
+	if _, err := e.koRunner(); err != nil {
+		return err
+	}
+	version := e.SubstrateVersion()
+	log.Stepf("save_images (%s)", version)
+
+	ln, err := listenStagingRegistry(e.Cfg.Kind)
+	if err != nil {
+		return fmt.Errorf("while starting local staging registry: %w", err)
+	}
+	srv := &http.Server{Handler: registry.New(registry.Logger(stdlog.New(io.Discard, "", 0)))}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() { _ = srv.Close() }()
+
+	stageRepo := ln.Addr().String()
+	const stageTag = "stage"
+
+	koEnv := []string{"KO_DOCKER_REPO=" + stageRepo}
+	if e.Cfg.KODefaultPlatforms != "" {
+		koEnv = append(koEnv, "KO_DEFAULTPLATFORMS="+e.Cfg.KODefaultPlatforms)
+	}
+	runner, err := ko.New(e.Cfg.Root, koEnv)
+	if err != nil {
+		return err
+	}
+
+	names := make([]string, 0, len(images.Components)+1)
+	if e.Cfg.Router != config.RouterAgentgateway {
+		if _, err := images.PublishDockerfileImage(ctx, e.Cfg.Root, stageRepo, images.EnvoyDataplane.Name, stageTag,
+			e.Cfg.Path(images.EnvoyDataplane.Context), e.Cfg.KODefaultPlatforms, e.Cfg.DockerBuildFlags); err != nil {
+			return err
+		}
+		names = append(names, images.EnvoyDataplane.Name)
+	}
+
+	pkgs := make([]string, 0, len(images.Components))
+	for _, pkg := range images.Components {
+		pkgs = append(pkgs, "./"+pkg)
+		names = append(names, images.ImageName(pkg))
+	}
+	if _, err := runner.BuildTagged(ctx, stageTag, nil, pkgs...); err != nil {
+		return err
+	}
+	if err := images.WriteArchive(ctx, outDir, stageRepo, stageTag, names); err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(w, "\nSaved %d images to %s:\n", len(names), outDir); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, err := fmt.Fprintln(w, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// listenStagingRegistry binds the loopback HTTP registry SaveImages pushes into.
+// Under --kind it tries 127.0.0.1:5001 first so CI buildkitd configs with
+// plain HTTP enabled on port 5001 match without extra configuration, falling
+// back to an ephemeral port when 5001 is already bound.
+func listenStagingRegistry(preferKindPort bool) (net.Listener, error) {
+	if preferKindPort {
+		if ln, err := net.Listen("tcp", "127.0.0.1:5001"); err == nil {
+			return ln, nil
+		}
+	}
+	return net.Listen("tcp", "127.0.0.1:0")
+}
+
+// PushImages pushes every image in the OCI image layout directory archiveDir to
+// KO_DOCKER_REPO under SubstrateVersion() and writes the pushed references to w.
+func (e *Env) PushImages(ctx context.Context, w io.Writer, archiveDir string) error {
+	if e.Cfg.Images.IsPrebuilt() {
+		return errors.New("pushing archived images writes to KO_DOCKER_REPO, which --image-repo does not use; drop --image-repo")
+	}
+	if e.Cfg.KODockerRepo == "" {
+		return errors.New("pushing archived images needs a registry to push to; set KO_DOCKER_REPO or --ko-docker-repo")
+	}
+	tag := e.SubstrateVersion()
+	log.Stepf("push_images (%s)", tag)
+
+	refs, err := images.PushArchive(ctx, archiveDir, e.Cfg.KODockerRepo, tag)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "\nPushed %d images for %s:\n", len(refs), tag); err != nil {
 		return err
 	}
 	for _, ref := range refs {

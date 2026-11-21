@@ -90,11 +90,41 @@ workflow attaches the files to the draft release.`,
 	},
 }
 
+var publishSaveImagesCmd = &cobra.Command{
+	Use:   "save-images DIR",
+	Short: "Build every installable image and write a deduplicated OCI layout to DIR",
+	Long: `Build every component image in images.Components (and envoy-dataplane when
+--atenet-dataplane=envoy) from this checkout and write them as an OCI image
+layout directory to DIR.
+
+Pair with "publish push-images DIR" to push the saved images into a registry
+under a chosen VERSION tag, then install them with --image-repo and
+--image-tag.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return env.SaveImages(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
+var publishPushImagesCmd = &cobra.Command{
+	Use:   "push-images DIR",
+	Short: "Push an OCI image layout saved by save-images to KO_DOCKER_REPO",
+	Long: `Push every image in DIR (written by "publish save-images") to KO_DOCKER_REPO,
+tagged with VERSION (else git describe), and print their digest-pinned
+references.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return env.PushImages(cmd.Context(), cmd.OutOrStdout(), args[0])
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(publishCmd)
 	publishCmd.AddCommand(publishWorkerImagesCmd)
 	publishCmd.AddCommand(publishReleaseImagesCmd)
 	publishCmd.AddCommand(publishReleaseBinariesCmd)
+	publishCmd.AddCommand(publishSaveImagesCmd)
+	publishCmd.AddCommand(publishPushImagesCmd)
 
 	config.RegisterCommand(config.Setting{
 		Key: "publish.binariesDir", Env: "ATE_PUBLISH_BINARIES_DIR", Flag: "out",

@@ -225,3 +225,60 @@ func TestPublishReleaseBinaries(t *testing.T) {
 		t.Errorf("%s --version = %q, want it to contain %q", binary, version, want)
 	}
 }
+
+func TestSaveAndPushImagesValidation(t *testing.T) {
+	prebuilt := &Env{Cfg: &config.Config{
+		Root:   t.TempDir(),
+		Images: images.Source{Repo: "example.com/substrate", Tag: "v1.2.3"},
+	}}
+	if err := prebuilt.SaveImages(t.Context(), io.Discard, t.TempDir()); err == nil || !strings.Contains(err.Error(), "--image-repo") {
+		t.Errorf("SaveImages() under --image-repo = %v, want an error naming --image-repo", err)
+	}
+	if err := prebuilt.PushImages(t.Context(), io.Discard, t.TempDir()); err == nil || !strings.Contains(err.Error(), "--image-repo") {
+		t.Errorf("PushImages() under --image-repo = %v, want an error naming --image-repo", err)
+	}
+
+	noRepo := &Env{Cfg: &config.Config{Root: t.TempDir()}}
+	if err := noRepo.PushImages(t.Context(), io.Discard, t.TempDir()); err == nil || !strings.Contains(err.Error(), "KO_DOCKER_REPO") {
+		t.Errorf("PushImages() without KO_DOCKER_REPO = %v, want an error naming KO_DOCKER_REPO", err)
+	}
+}
+
+func TestPushImagesPushesArchivedLayout(t *testing.T) {
+	srcSrv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	t.Cleanup(srcSrv.Close)
+	srcRepo := strings.TrimPrefix(srcSrv.URL, "http://")
+
+	dstSrv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	t.Cleanup(dstSrv.Close)
+	dstRepo := strings.TrimPrefix(dstSrv.URL, "http://")
+
+	parsed, err := name.ParseReference(srcRepo + "/ateapi:stage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(parsed, empty.Image); err != nil {
+		t.Fatal(err)
+	}
+
+	archiveDir := t.TempDir()
+	if err := images.WriteArchive(t.Context(), archiveDir, srcRepo, "stage", []string{"ateapi"}); err != nil {
+		t.Fatalf("WriteArchive() error = %v", err)
+	}
+
+	t.Setenv("VERSION", "e2e")
+	e := &Env{Cfg: &config.Config{
+		Root:         t.TempDir(),
+		KODockerRepo: dstRepo,
+	}}
+	var out strings.Builder
+	if err := e.PushImages(t.Context(), &out, archiveDir); err != nil {
+		t.Fatalf("PushImages() error = %v", err)
+	}
+	if _, err := images.RemoteDigest(t.Context(), dstRepo+"/ateapi:e2e"); err != nil {
+		t.Errorf("RemoteDigest(ateapi:e2e) after PushImages() = %v", err)
+	}
+	if !strings.Contains(out.String(), dstRepo+"/ateapi:e2e@sha256:") {
+		t.Errorf("PushImages() output = %q, want digest-pinned ref", out.String())
+	}
+}

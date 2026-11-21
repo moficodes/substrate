@@ -70,6 +70,8 @@ func TestOnlyPublishSkipsTheCluster(t *testing.T) {
 		{path: "publish release-images", want: false},
 		{path: "publish release-binaries", want: false},
 		{path: "publish worker-images", want: false},
+		{path: "publish save-images", want: false},
+		{path: "publish push-images", want: false},
 		{path: "deploy ate-system", want: true},
 		{path: "delete ate-system", want: true},
 		{path: "setup csi", want: true},
