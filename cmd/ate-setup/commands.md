@@ -128,6 +128,8 @@ cluster.
 - `publish worker-images`
 - `publish release-images`
 - `publish release-binaries`
+- `publish save-images DIR`
+- `publish push-images DIR`
 
 `publish worker-images` builds and pushes the worker images for the
 checked-out build and prints their refs; a WorkerPool points `spec.workerImage`
@@ -142,6 +144,13 @@ and arm64 into `--out` (default `bin/release`), stamped with the build version, 
 and commit time, each with a `.sha256` file that `shasum -a 256 -c` checks. The
 version has to be a release tag. It uploads nothing; the release workflow
 attaches the files to the draft release.
+
+`publish save-images DIR` builds every image in `images.Components` (plus
+`envoy-dataplane` when `--atenet-dataplane=envoy`) and writes a deduplicated OCI
+image layout directory to `DIR`. `publish push-images DIR` pushes that layout to
+`KO_DOCKER_REPO` tagged with `VERSION` (else `git describe`), so multiple
+clusters can install the same build via `--image-repo` and `--image-tag` without
+recompiling.
 
 ## Delete
 
