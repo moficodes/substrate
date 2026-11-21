@@ -70,6 +70,7 @@ var systemMountOwners = []statResponse{
 // It runs against whichever sandbox class E2E_SANDBOX_CLASS selects, so CI
 // covers both gVisor and microVM from one suite.
 func TestImageLayerOwnership(t *testing.T) {
+	t.Parallel()
 	if _, err := e2e.CheckEnv("KO_DOCKER_REPO"); err != nil {
 		t.Fatalf("CheckEnv failed: %v", err)
 	}
@@ -147,6 +148,7 @@ const (
 // resumes from that golden snapshot. It runs against whichever sandbox class
 // E2E_SANDBOX_CLASS selects, so CI covers both gVisor and microVM.
 func TestImageUserAndWorkdir(t *testing.T) {
+	t.Parallel()
 	if _, err := e2e.CheckEnv("KO_DOCKER_REPO"); err != nil {
 		t.Fatalf("CheckEnv failed: %v", err)
 	}
@@ -216,6 +218,7 @@ type stdinResponse struct {
 // snapshot disabled, so on microVM the check covers the CloseStdin call in
 // StartRootfsContainer.
 func TestStdinReadsEOF(t *testing.T) {
+	t.Parallel()
 	if _, err := e2e.CheckEnv("KO_DOCKER_REPO"); err != nil {
 		t.Fatalf("CheckEnv failed: %v", err)
 	}
