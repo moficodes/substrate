@@ -133,9 +133,12 @@ Test gated code both with and without the gate.
   hack/run-e2e-kind.sh -v -args --preview=ALL
   ```
 
-  CI runs every e2e lane with preview gates both off and on, and requires
-  `--preview` to be passed (even as empty) so a lane cannot silently skip
-  every preview test.
+  CI runs the full e2e suites with preview gates off, and runs the
+  preview-gated tests (`PREVIEW_RUN_REGEX` in
+  `.github/workflows/pr-workflow.yaml`) with `--preview=ALL`.
+  `TestPreviewWorkflowFilter` checks that every e2e test referencing `preview`
+  matches `PREVIEW_RUN_REGEX`, and CI requires `--preview` to be passed (even
+  as empty) so a lane cannot silently skip preview tests.
 
 ## Graduating or removing a gate
 
