@@ -23,9 +23,39 @@ if [[ -r .ate-dev-env.sh ]] && [[ -z "${NO_DEV_ENV:-}" ]]; then
 	source .ate-dev-env.sh
 fi
 
+# Suites and top-level tests whose behavior depends on preview gates. Kept in
+# sync with internal/e2e/suites by TestPreviewOnlyFilter in internal/e2e.
+preview_target_paths=(
+    ./internal/e2e/suites/combinedvolumes
+    ./internal/e2e/suites/demo
+    ./internal/e2e/suites/egressmitm
+    ./internal/e2e/suites/networking
+    ./internal/e2e/suites/snapshotcredentials
+)
+preview_tests=(
+    TestActorSnapshotLifecycle
+    TestCombinedVolumes
+    TestDeleteRunningActorWithExternalVolume
+    TestExternalVolumeLifecycle
+    TestExternalVolume_NodeMigration
+    TestGoldenBootEgress
+    TestIngressCache_BodyBypassesCache
+    TestIngressCache_GRPCBypassesCache
+    TestIngressCache_HitAndTTL
+    TestIngressCache_StaleHitReplaysAfterSuspend
+    TestIngressCache_SuspendMidRequestIsNotReplayed
+    TestRepointMovesTheGrant
+)
+
+join_by() {
+    local IFS="$1"
+    shift
+    echo "$*"
+}
+
 show_help() {
     cat <<EOF
-Usage: $0 [target-path] [go-test-flags] [-args [e2e-flags]]
+Usage: $0 [target-path] [--preview-only] [go-test-flags] [-args [e2e-flags]]
 
 Runs End-to-End tests.
 
@@ -36,13 +66,18 @@ instead of its 5m production default.
 The optional "target-path" must be the first argument and must start with
 "./internal/e2e" or "internal/e2e". It defaults to "./internal/e2e/suites/...".
 
-Arguments before "-args" (excluding the target-path) are passed directly to "go test".
+Arguments before "-args" (excluding the target-path and --preview-only) are
+passed directly to "go test".
 Arguments after "-args" are passed to the test binary.
 
 Example:
-  $0 -run TestExample                 # Run only TestExample suite
-  $0 -args --kube-context my-context   # Pass kube-context to E2E framework
-  $0 -run TestExample -args --no-color # Combine both
+  $0 -run TestExample                        # Run only TestExample suite
+  $0 --preview-only -args --preview=ALL      # Run only preview-affected tests
+  $0 -args --kube-context my-context         # Pass kube-context to E2E framework
+  $0 -run TestExample -args --no-color       # Combine both
+
+Script Flags (passed before -args):
+  --preview-only   Run only suites and tests affected by preview gates
 
 Common E2E Flags (passed after -args):
   --e2e            Enable E2E tests (implied by this script)
@@ -71,7 +106,8 @@ See "go help testflag" for more Go test flags.
 EOF
 }
 
-target_path="./internal/e2e/suites/..."
+target_paths=("./internal/e2e/suites/...")
+has_target_path=false
 
 if [[ "$#" -gt 0 ]]; then
     if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -80,10 +116,11 @@ if [[ "$#" -gt 0 ]]; then
     fi
 
     if [[ "$1" == "./internal/e2e"* || "$1" == "internal/e2e"* ]]; then
-        target_path="$1"
+        target_paths=("$1")
+        has_target_path=true
         shift
     elif [[ "$1" == -* ]]; then
-        # It's a flag, keep default target_path, don't shift
+        # It's a flag, keep default target_paths, don't shift
         :
     else
         echo "Error: Invalid target path '$1'." >&2
@@ -96,9 +133,11 @@ fi
 go_test_args=()
 e2e_args=()
 found_args_sep=false
+preview_only=false
 has_p_flag=false
 has_parallel_flag=false
 has_timeout_flag=false
+has_run_flag=false
 
 for arg in "$@"; do
     if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
@@ -111,13 +150,22 @@ for arg in "$@"; do
     fi
 
     if [[ "$found_args_sep" == "true" ]]; then
+        if [[ "$arg" == "--preview-only" || "$arg" == "-preview-only" ]]; then
+            echo "Error: --preview-only must be passed before -args." >&2
+            exit 1
+        fi
         e2e_args+=("$arg")
     else
+        if [[ "$arg" == "--preview-only" || "$arg" == "-preview-only" ]]; then
+            preview_only=true
+            continue
+        fi
         # Both spellings: go's flag package accepts -flag, --flag, and either with =value.
         case "$arg" in
             -p|-p=*|--p|--p=*) has_p_flag=true ;;
             -parallel|-parallel=*|--parallel|--parallel=*) has_parallel_flag=true ;;
             -timeout|-timeout=*|--timeout|--timeout=*) has_timeout_flag=true ;;
+            -run|-run=*|--run|--run=*) has_run_flag=true ;;
         esac
         go_test_args+=("$arg")
     fi
@@ -154,9 +202,17 @@ fi
 if [[ "${has_timeout_flag}" == "false" ]]; then
     default_go_test_args+=("-timeout" "${E2E_TIMEOUT:-30m}")
 fi
+if [[ "${preview_only}" == "true" ]]; then
+    if [[ "${has_target_path}" == "true" || "${has_run_flag}" == "true" ]]; then
+        echo "Error: --preview-only cannot be combined with a target path or -run." >&2
+        exit 1
+    fi
+    target_paths=("${preview_target_paths[@]}")
+    default_go_test_args+=("-run" "^($(join_by '|' "${preview_tests[@]}"))$")
+fi
 
 # Assembled once so the two execution paths below cannot drift apart.
-test_argv=("$target_path")
+test_argv=("${target_paths[@]}")
 test_argv+=(${default_go_test_args[@]+"${default_go_test_args[@]}"})
 test_argv+=(${go_test_args[@]+"${go_test_args[@]}"})
 test_argv+=(-args --e2e)
