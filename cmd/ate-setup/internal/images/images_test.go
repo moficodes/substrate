@@ -142,3 +142,56 @@ func TestImageNameOfANestedPackage(t *testing.T) {
 		t.Errorf("ImageName() = %q, want fspersist", got)
 	}
 }
+
+var e2eComponentsBlockPattern = regexp.MustCompile(`(?ms)^COMPONENTS=\(\n(.*?)^\)$`)
+
+// .github/scripts/e2e/build-images.sh pre-builds the images that e2e lanes
+// install through --image-repo. Keeping its list equal to images.Components
+// catches a new manifest or demo component during unit tests before e2e runs.
+func TestE2EBuildScriptCoversComponents(t *testing.T) {
+	root, err := config.RepoRoot()
+	if err != nil {
+		t.Fatalf("resolving repo root: %v", err)
+	}
+
+	scriptPath := filepath.Join(root, ".github", "scripts", "e2e", "build-images.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", scriptPath, err)
+	}
+	body := string(raw)
+
+	match := e2eComponentsBlockPattern.FindStringSubmatch(body)
+	if match == nil {
+		t.Fatalf("%s has no COMPONENTS=( ... ) block", scriptPath)
+	}
+
+	var got []string
+	for _, line := range strings.Split(match[1], "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		got = append(got, line)
+	}
+	slices.Sort(got)
+
+	want := slices.Clone(images.Components)
+	slices.Sort(want)
+
+	if !slices.Equal(got, want) {
+		t.Errorf("COMPONENTS in .github/scripts/e2e/build-images.sh and images.Components disagree:\n"+
+			" in build-images.sh: %v\n"+
+			" in images.Components: %v",
+			got, want)
+	}
+
+	for _, img := range images.ReleaseDockerfileImages() {
+		if !strings.Contains(body, img.Name+":") {
+			t.Errorf(".github/scripts/e2e/build-images.sh does not tag Dockerfile image %q", img.Name)
+		}
+		if !strings.Contains(body, img.Context) {
+			t.Errorf(".github/scripts/e2e/build-images.sh does not build Dockerfile context %q", img.Context)
+		}
+	}
+}
