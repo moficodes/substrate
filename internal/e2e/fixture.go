@@ -25,6 +25,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -130,8 +132,8 @@ type SubstrateFixtureManifests struct {
 }
 
 // DeploySubstrateFixture installs a fixture for the sandbox class under test:
-// it ko-applies the pool manifest, creates the fixture's atespace and
-// ActorTemplates through the ate API (ko-resolving the templates' ko:// image
+// it applies the pool manifest, creates the fixture's atespace and
+// ActorTemplates through the ate API (resolving the templates' ko:// image
 // references first), and blocks until every template's golden snapshot
 // exists (unless WithGoldenSnapshotDisabled is passed). name distinguishes the
 // caller (by convention its suite name): each
@@ -156,27 +158,9 @@ func DeploySubstrateFixture(t *testing.T, ctx context.Context, clients *Clients,
 		opt(&cfg)
 	}
 
-	// The pool manifest also carries the namespace. Its cleanup is registered
-	// first so it runs last (t.Cleanup is LIFO), after the templates that
-	// select the pool's workers are gone.
-	inline, blocks := fixtureSubstitutions(name)
-	poolManifest := renderManifest(t, manifests.Pool, inline, blocks)
-	koApply(t, poolManifest)
-	t.Cleanup(func() {
-		delArgs := []string{"delete", "--ignore-not-found", "-f", poolManifest}
-		if KubeContext != "" {
-			delArgs = append([]string{"--context=" + KubeContext}, delArgs...)
-		}
-		RunCmd(t, "kubectl", delArgs...)
-	})
-
 	tmplInline, tmplBlocks := substrateTemplateSubstitutions(name, trustBundles)
 	maps.Copy(tmplInline, cfg.templateValues)
-	var resolveArgs []string
-	if cfg.imageUser != "" {
-		resolveArgs = append(resolveArgs, "--image-user", cfg.imageUser)
-	}
-	rendered := koResolve(t, renderManifest(t, manifests.Template, tmplInline, tmplBlocks), resolveArgs...)
+	rendered := koResolve(t, renderManifest(t, manifests.Template, tmplInline, tmplBlocks), cfg.imageUser)
 	templates := decodeSubstrateTemplates(t, rendered)
 
 	atespace := templates[0].GetMetadata().GetAtespace()
@@ -200,6 +184,25 @@ func DeploySubstrateFixture(t *testing.T, ctx context.Context, clients *Clients,
 			}
 		}
 	}
+
+	waitForTerminatingNamespace(ctx, t, clients, atespace)
+
+	// The pool manifest also carries the namespace. Its cleanup is registered
+	// first so it runs last (t.Cleanup is LIFO), after the templates that
+	// select the pool's workers are gone.
+	inline, blocks := fixtureSubstitutions(name)
+	poolManifest := renderManifest(t, manifests.Pool, inline, blocks)
+	ApplyManifest(t, poolManifest)
+	t.Cleanup(func() {
+		delArgs := []string{"delete", "--ignore-not-found", "--wait=false", "-f", poolManifest}
+		if KubeConfig != "" {
+			delArgs = append([]string{"--kubeconfig=" + KubeConfig}, delArgs...)
+		}
+		if KubeContext != "" {
+			delArgs = append([]string{"--context=" + KubeContext}, delArgs...)
+		}
+		RunCmd(t, "kubectl", delArgs...)
+	})
 
 	if _, err := clients.SubstrateAPI.CreateAtespace(ctx, &ateapi.CreateAtespaceRequest{Atespace: &ateapi.Atespace{Metadata: &ateapi.ResourceMetadata{Name: atespace}}}); err != nil && status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("failed to create atespace %q: %v", atespace, err)
@@ -243,4 +246,29 @@ func DeploySubstrateFixture(t *testing.T, ctx context.Context, clients *Clients,
 		}
 	}
 	return atespace, created
+}
+
+// waitForTerminatingNamespace waits for a namespace that is still terminating
+// from an earlier test's non-blocking cleanup before re-applying its manifest.
+func waitForTerminatingNamespace(ctx context.Context, t *testing.T, clients *Clients, name string) {
+	t.Helper()
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		ns, err := clients.K8s.CoreV1().Namespaces().Get(waitCtx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("checking namespace %q before fixture deploy: %v", name, err)
+		}
+		if ns.DeletionTimestamp.IsZero() {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf("timed out waiting for terminating namespace %q to delete: %v", name, waitCtx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
