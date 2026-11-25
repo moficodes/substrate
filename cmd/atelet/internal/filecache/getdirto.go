@@ -52,6 +52,13 @@ func (s *Store) GetDirTo(ctx context.Context, key Key, dst string, fetch DirFetc
 	return s.getTo(ctx, key, dst, fetchFunc(fetch), kindTree, s.linkTreeOut)
 }
 
+// TryGetDirTo links the cached tree identified by key at dst if it is already
+// in the cache, without fetching on a miss. It reports whether the tree was
+// linked.
+func (s *Store) TryGetDirTo(ctx context.Context, key Key, dst string) (bool, error) {
+	return s.tryGetTo(ctx, key, dst, s.linkTreeOut)
+}
+
 // linkTreeOut mirrors key's published tree at dst, hard-linking every
 // regular file, and touches the entry's last-use clock. It reports false
 // (and no error) on a cache miss. The tree is built beside dst and renamed

@@ -26,7 +26,8 @@ package main
 //     emit a Warning Event on the pod when a sync fails
 //
 // worker_sandbox_versions.go builds the sandbox runtimes file for each
-// worker pod.
+// worker pod, and worker_sandbox_prep.go runs slow asset fetches and probes
+// off the sync workers.
 
 import (
 	"context"
@@ -90,9 +91,9 @@ const syncMaxJitter = 30 * time.Second
 // directory, since nothing enqueues the pod when those recover.
 const syncMaxRetries = 8
 
-// syncWorkers is how many goroutines drain the sync queue in run. More than
-// one keeps a slow asset fetch on one pod from blocking directory cleanup and
-// cached syncs for other pods on the node.
+// syncWorkers is how many goroutines drain the sync queue in run. Asset
+// fetches and runsc probes run asynchronously in prep, so sync workers handle
+// local filesystem links, file writes, and directory removals only.
 const syncWorkers = 2
 
 const (
@@ -123,14 +124,16 @@ type workerSandboxSyncer struct {
 	// pods holds this node's worker pods, indexed by podUIDIndex.
 	pods   cache.Indexer
 	assets sandboxAssetFetcher
-	// scratchDir is where buildFile stages a restorable version's assets to
-	// verify them, and the runsc it probes for any version, read from
-	// ateletpath once here so a test can point a syncer elsewhere.
+	// scratchDir is where prepareVersion stages a version's assets to populate
+	// the cache and probe runsc cpu-features, read from ateletpath once here
+	// so a test can point a syncer elsewhere.
 	scratchDir string
 	// queue carries pod UIDs. A workqueue never hands the same key to two
 	// workers at once, so a pod's file is never written and its directory
 	// removed at the same time.
 	queue      workqueue.TypedRateLimitingInterface[string]
+	prep       *versionPreparer
+	done       chan struct{}
 	workersDir string // nodepath.WorkersDir(); a temp dir in tests
 	minAge     time.Duration
 	maxJitter  time.Duration
@@ -139,22 +142,27 @@ type workerSandboxSyncer struct {
 	probeCPUIdentity func() (vendor, model string, err error)
 	// runCPUFeatures is runRunscCPUFeatures. Overridable in tests.
 	runCPUFeatures func(ctx context.Context, runscPath string) ([]string, error)
-	// mu guards hostCPU, cpuFeatures and verifiedBundles across the
-	// syncWorkers in run: hostCPU is the probed host CPU identity, nil until
-	// a probe succeeds; cpuFeatures is the encoded cpu_features of each
-	// runsc binary by its gVisor asset's SHA256 digest; and verifiedBundles
-	// holds the bundle hashes of versions whose assets have been verified in
-	// this atelet process. A restorable version is verified once per atelet
-	// process (except when two workers meet a version before either
-	// memoizes it); the default version is staged on every sync.
-	mu              sync.Mutex
-	hostCPU         *cpuIdentity
-	cpuFeatures     map[string]string
-	verifiedBundles map[string]bool
+	// probeWG tracks detached runsc cpu-features probe goroutines so shutdown
+	// waits for all of them to exit.
+	probeWG sync.WaitGroup
+	// mu guards hostCPU, cpuFeatures, cpuFeatureProbes, and verifiedBundles
+	// across the syncWorkers and background version preparations: hostCPU is
+	// the probed host CPU identity, nil until a probe succeeds; cpuFeatures is
+	// the encoded cpu_features of each runsc binary by its gVisor asset's
+	// SHA256 digest; cpuFeatureProbes deduplicates in-flight runsc probes per
+	// digest; and verifiedBundles holds the bundle hashes of versions whose
+	// assets have been verified in this atelet process. A restorable version
+	// is verified once per atelet process; the default version is staged from
+	// the local cache on every sync (and fetched in the background on a miss).
+	mu               sync.Mutex
+	hostCPU          *cpuIdentity
+	cpuFeatures      map[string]string
+	cpuFeatureProbes map[string]*cpuFeatureProbe
+	verifiedBundles  map[string]bool
 }
 
 func newWorkerSandboxSyncer(resolver *workerSandboxResolver, pods cache.Indexer, assets sandboxAssetFetcher, workersDir string, index *runtimeIndex, recorder events.EventRecorder) *workerSandboxSyncer {
-	return &workerSandboxSyncer{
+	s := &workerSandboxSyncer{
 		resolver:   resolver,
 		pods:       pods,
 		assets:     assets,
@@ -166,21 +174,29 @@ func newWorkerSandboxSyncer(resolver *workerSandboxResolver, pods cache.Indexer,
 		// failures stay until they recover.
 		queue: workqueue.NewTypedRateLimitingQueue(
 			workqueue.NewTypedItemExponentialFailureRateLimiter[string](time.Second, 5*time.Minute)),
+		done:             make(chan struct{}),
 		workersDir:       workersDir,
 		minAge:           orphanMinAge,
 		maxJitter:        syncMaxJitter,
 		probeCPUIdentity: hardware.ProbeCPUIdentity,
 		runCPUFeatures:   runRunscCPUFeatures,
 		cpuFeatures:      make(map[string]string),
+		cpuFeatureProbes: make(map[string]*cpuFeatureProbe),
 		verifiedBundles:  make(map[string]bool),
 	}
+	// Capture s so tests that replace s.queue still receive preparer wakeups.
+	s.prep = newVersionPreparer(maxConcurrentPreps, func(uid string) {
+		s.queue.Add(uid)
+	})
+	return s
 }
 
 // sandboxAssetFetcher is the slice of Atelet the syncer needs. Staging
-// through the same method as the Run/Restore path keeps the fetches from
+// through the same methods as the Run/Restore path keeps the fetches from
 // ever diverging on cache layout or validation.
 type sandboxAssetFetcher interface {
 	ensureSandboxAssets(ctx context.Context, rec *sandboxAssetsRecord, dstDir string) (map[string]string, error)
+	stageCachedSandboxAssets(ctx context.Context, rec *sandboxAssetsRecord, dstDir string) (map[string]string, bool, error)
 }
 
 // defaultRuntimeDirsName is the directory under a worker's own that holds
@@ -421,6 +437,7 @@ func (s *workerSandboxSyncer) enqueueExistingDirs(ctx context.Context) {
 //   - before the WorkerPool and SandboxConfig caches sync, no pod resolves
 //     and each sync would spend a retry
 func (s *workerSandboxSyncer) run(ctx context.Context, synced ...cache.InformerSynced) {
+	defer close(s.done)
 	go func() {
 		<-ctx.Done()
 		s.queue.ShutDown()
@@ -444,25 +461,39 @@ func (s *workerSandboxSyncer) run(ctx context.Context, synced ...cache.InformerS
 		}()
 	}
 	wg.Wait()
+	s.waitBackground()
+}
+
+// waitBackground blocks until all in-flight version preparations and detached
+// runsc probes have exited. Callers must stop starting new preparations before
+// calling waitBackground.
+func (s *workerSandboxSyncer) waitBackground() {
+	s.prep.wait()
+	s.probeWG.Wait()
 }
 
 // process brings the directory of the pod with the given UID up to date:
 // written from its pool's current config while the pod exists, removed once
-// it is gone.
-func (s *workerSandboxSyncer) process(ctx context.Context, uid string) {
+// it is gone. It reports whether the pod is still waiting on background
+// version preparation.
+func (s *workerSandboxSyncer) process(ctx context.Context, uid string) bool {
 	defer s.queue.Done(uid)
 	var related k8sruntime.Object
 	pod, err := s.podByUID(uid)
 	switch {
 	case err != nil:
+		s.prep.reconcilePod(uid, nil, nil)
 	case pod == nil:
+		s.prep.reconcilePod(uid, nil, nil)
 		err = s.removeDir(ctx, uid)
 	case pod.DeletionTimestamp != nil:
+		s.prep.reconcilePod(uid, nil, nil)
 		// The Delete event removes the directory.
 	default:
 		related, err = s.syncPod(ctx, pod)
 	}
 	s.finish(ctx, pod, related, uid, err)
+	return errors.Is(err, errVersionPreparing)
 }
 
 // podByUID returns the cached pod with the given UID, or nil if there is none.
@@ -482,11 +513,12 @@ func (s *workerSandboxSyncer) podByUID(uid string) (*corev1.Pod, error) {
 	return pod, nil
 }
 
-// finish forgets uid on success or errPermanent, caps errUnresolved retries at
-// syncMaxRetries, and otherwise requeues with backoff without a retry cap. It
-// emits a Warning Event on pod for every failure except an unresolved pool
-// still being retried. A sync that fails before it writes leaves the existing
-// file in place.
+// finish forgets uid on success or errPermanent, leaves uid alone on
+// errVersionPreparing (the preparer re-enqueues uid when background work
+// finishes), caps errUnresolved retries at syncMaxRetries, and otherwise
+// requeues with backoff without a retry cap. It emits a Warning Event on pod
+// for every failure except an unresolved pool still being retried. A sync that
+// fails before it writes leaves the existing file in place.
 func (s *workerSandboxSyncer) finish(ctx context.Context, pod *corev1.Pod, related k8sruntime.Object, uid string, err error) {
 	switch {
 	case err == nil:
@@ -497,6 +529,8 @@ func (s *workerSandboxSyncer) finish(ctx context.Context, pod *corev1.Pod, relat
 		s.queue.Forget(uid)
 	case ctx.Err() != nil:
 		// Shutting down, not a sync failure.
+	case errors.Is(err, errVersionPreparing):
+		// Background preparation re-enqueues uid when it finishes.
 	case errors.Is(err, errIncomplete):
 		slog.WarnContext(ctx, "Worker sandbox runtimes file is missing a restorable version; will retry",
 			slog.String("pod_uid", uid), slog.Int("retries", s.queue.NumRequeues(uid)), slog.Any("err", err))

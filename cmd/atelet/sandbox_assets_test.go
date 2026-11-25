@@ -528,3 +528,96 @@ func TestWriteSandboxRecordKeepsAnUnchangedRecord(t *testing.T) {
 		t.Errorf("sandbox record sha256 = %q after a change, want the new one", sha)
 	}
 }
+
+func TestStageCachedSandboxAssets(t *testing.T) {
+	tarball, kernel := gvisorReleaseTarball(t), []byte("kernel bytes")
+	root := t.TempDir()
+	storage := &bucketStorage{objects: map[string][]byte{"gvisor/release.tar": tarball, "assets/vmlinux": kernel}}
+	s := &Atelet{sandboxAssetCache: newTestAssetCacheAt(t, root), anonGCSClient: storage}
+	rec := &sandboxAssetsRecord{
+		SandboxClass: "gvisor",
+		Assets: map[string]assetEntry{
+			gvisorAssetName: {URL: "gs://gvisor/release.tar", SHA256: fmt.Sprintf("%x", sha256.Sum256(tarball))},
+			"kata-kernel":   {URL: "gs://assets/vmlinux", SHA256: fmt.Sprintf("%x", sha256.Sum256(kernel))},
+		},
+	}
+
+	// Empty cache: miss without starting any downloads or creating parent dirs.
+	missDir := filepath.Join(root, "worker", "default-runtime", "sha256-miss")
+	paths, ok, err := s.stageCachedSandboxAssets(t.Context(), rec, missDir)
+	if err != nil || ok || paths != nil {
+		t.Fatalf("stageCachedSandboxAssets (cold) = (%v, %v, %v), want (nil, false, nil)", paths, ok, err)
+	}
+	if storage.gets.Load() != 0 {
+		t.Errorf("cold stageCachedSandboxAssets fetched %d objects, want 0", storage.gets.Load())
+	}
+	if _, err := os.Stat(filepath.Join(root, "worker")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("cold miss left parent worker dir behind (stat err = %v)", err)
+	}
+
+	// Non-empty ancestor (e.g. a concurrent ateworker.sock under worker/) is
+	// preserved while empty newly-created subdirs beneath it are removed.
+	liveWorkerDir := filepath.Join(root, "live-worker")
+	if err := os.MkdirAll(liveWorkerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(liveWorkerDir, "ateworker.sock")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if paths, ok, err := s.stageCachedSandboxAssets(t.Context(), rec, filepath.Join(liveWorkerDir, "default-runtime", "sha256-miss")); err != nil || ok || paths != nil {
+		t.Fatalf("stageCachedSandboxAssets (live worker miss) = (%v, %v, %v), want (nil, false, nil)", paths, ok, err)
+	}
+	if _, err := os.Stat(sock); err != nil {
+		t.Errorf("rollback removed sibling file under worker dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(liveWorkerDir, "default-runtime")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("rollback left empty default-runtime dir behind (stat err = %v)", err)
+	}
+
+	// Partial miss in an existing dstDir rolls back assets linked during the call.
+	onlyKernel := &sandboxAssetsRecord{
+		SandboxClass: "microvm",
+		Assets:       map[string]assetEntry{"kata-kernel": rec.Assets["kata-kernel"]},
+	}
+	if _, err := s.ensureSandboxAssets(t.Context(), onlyKernel, filepath.Join(root, "warm-kernel")); err != nil {
+		t.Fatalf("ensureSandboxAssets(kernel): %v", err)
+	}
+	existingDir := filepath.Join(root, "existing")
+	if err := os.MkdirAll(existingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if paths, ok, err := s.stageCachedSandboxAssets(t.Context(), rec, existingDir); err != nil || ok || paths != nil {
+		t.Fatalf("stageCachedSandboxAssets (partial miss) = (%v, %v, %v), want (nil, false, nil)", paths, ok, err)
+	}
+	if entries, err := os.ReadDir(existingDir); err != nil || len(entries) != 0 {
+		t.Errorf("partial miss left entries %v (%v) in existing dstDir, want empty", entries, err)
+	}
+
+	// Populate via ensureSandboxAssets, then stageCachedSandboxAssets links
+	// both the tree and single-file asset without downloading again.
+	warmDir := filepath.Join(root, "warm-all")
+	if _, err := s.ensureSandboxAssets(t.Context(), rec, warmDir); err != nil {
+		t.Fatalf("ensureSandboxAssets: %v", err)
+	}
+	hitDir := filepath.Join(root, "worker", "hit")
+	paths, ok, err = s.stageCachedSandboxAssets(t.Context(), rec, hitDir)
+	if err != nil || !ok {
+		t.Fatalf("stageCachedSandboxAssets (warm) = (%v, %v, %v), want hit", paths, ok, err)
+	}
+	if storage.gets.Load() != 2 {
+		t.Errorf("bucket gets after warm stageCachedSandboxAssets = %d, want 2", storage.gets.Load())
+	}
+	if paths[gvisorAssetName] != filepath.Join(hitDir, gvisorAssetName, "runsc") || paths["kata-kernel"] != filepath.Join(hitDir, "kata-kernel") {
+		t.Errorf("stageCachedSandboxAssets paths = %v", paths)
+	}
+
+	// Bad asset names fail with InvalidArgument without fetching.
+	badRec := &sandboxAssetsRecord{
+		SandboxClass: "microvm",
+		Assets:       map[string]assetEntry{"../bad": {URL: "gs://assets/vmlinux", SHA256: strings.Repeat("a", 64)}},
+	}
+	if _, _, err := s.stageCachedSandboxAssets(t.Context(), badRec, filepath.Join(root, "worker", "bad")); apierror.Code(err) != codes.InvalidArgument {
+		t.Errorf("stageCachedSandboxAssets (bad name) = %v, want InvalidArgument", err)
+	}
+}

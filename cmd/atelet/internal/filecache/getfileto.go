@@ -79,26 +79,26 @@ func (s *Store) GetFileTo(ctx context.Context, key Key, dst string, fetch FileFe
 	return s.getTo(ctx, key, dst, fetchFunc(fetch), kindFile, s.linkOut)
 }
 
+// TryGetFileTo links the cached file identified by key at dst if it is already
+// in the cache, without fetching on a miss. It reports whether the file was
+// linked.
+func (s *Store) TryGetFileTo(ctx context.Context, key Key, dst string) (bool, error) {
+	return s.tryGetTo(ctx, key, dst, s.linkOut)
+}
+
 // getTo is the read-through loop shared by the public Get methods: serve a
 // hit, else run the singleflight fetch and retry. kind decides how a fetch
 // is published and serve how a hit is materialized; nothing else differs.
 func (s *Store) getTo(ctx context.Context, key Key, dst string, fetch fetchFunc, kind entryKind, serve serveHit) error {
-	if key.isZero() {
-		return errors.New("filecache: zero Key (use a Key constructor)")
-	}
-	if !filepath.IsAbs(dst) {
-		return fmt.Errorf("filecache: destination %q is not an absolute path", dst)
+	if err := validateGetArgs(key, dst); err != nil {
+		return err
 	}
 	for attempt := 0; ; attempt++ {
-		served, err := serve(key, dst)
+		served, err := s.serveHit(ctx, key, dst, attempt, serve)
 		if err != nil {
 			return err
 		}
 		if served {
-			slog.InfoContext(ctx, "filecache: hit",
-				slog.String("key", key.String()),
-				slog.String("dst", dst),
-				slog.Int("attempt", attempt))
 			return nil
 		}
 		if attempt >= linkRetries {
@@ -108,6 +108,39 @@ func (s *Store) getTo(ctx context.Context, key Key, dst string, fetch fetchFunc,
 			return err
 		}
 	}
+}
+
+// tryGetTo serves a cached entry at dst without starting a fetch. It reports
+// false, with no error, on a cache miss.
+func (s *Store) tryGetTo(ctx context.Context, key Key, dst string, serve serveHit) (bool, error) {
+	if err := validateGetArgs(key, dst); err != nil {
+		return false, err
+	}
+	return s.serveHit(ctx, key, dst, 0, serve)
+}
+
+func validateGetArgs(key Key, dst string) error {
+	if key.isZero() {
+		return errors.New("filecache: zero Key (use a Key constructor)")
+	}
+	if !filepath.IsAbs(dst) {
+		return fmt.Errorf("filecache: destination %q is not an absolute path", dst)
+	}
+	return nil
+}
+
+func (s *Store) serveHit(ctx context.Context, key Key, dst string, attempt int, serve serveHit) (bool, error) {
+	served, err := serve(key, dst)
+	if err != nil {
+		return false, err
+	}
+	if served {
+		slog.InfoContext(ctx, "filecache: hit",
+			slog.String("key", key.String()),
+			slog.String("dst", dst),
+			slog.Int("attempt", attempt))
+	}
+	return served, nil
 }
 
 // linkOut links key's published data file to dst and touches the entry's
