@@ -154,6 +154,111 @@ func (s *Atelet) ensureSandboxAssets(ctx context.Context, rec *sandboxAssetsReco
 	return paths, nil
 }
 
+// stageCachedSandboxAssets links every asset in rec from the local asset cache
+// into dstDir without starting a download. It returns (paths, true, nil) when
+// every asset is already staged or cached, or (nil, false, nil) if any asset
+// is missing from the cache. On a miss or error, any directories or links
+// created by this call are removed.
+func (s *Atelet) stageCachedSandboxAssets(ctx context.Context, rec *sandboxAssetsRecord, dstDir string) (map[string]string, bool, error) {
+	for name, entry := range rec.Assets {
+		if !plainAssetName(name) {
+			return nil, false, apierror.InvalidArgument("sandbox asset name %q is not a plain file name", name)
+		}
+		if _, err := assetKey(entry); err != nil {
+			return nil, false, err
+		}
+	}
+	missingRoot, err := firstMissingAncestor(dstDir)
+	if err != nil {
+		return nil, false, wrapFileSystemErr("while checking sandbox assets dir", err)
+	}
+	if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		return nil, false, wrapFileSystemErr("while creating sandbox assets dir", err)
+	}
+	var createdLinks []string
+	rollback := func() {
+		if missingRoot != "" {
+			// Remove dstDir recursively (owned by this call), then prune only
+			// empty newly-created ancestors up to missingRoot so a concurrent
+			// ateworker creating ateworker.sock under workers/<uid> is never
+			// disturbed.
+			_ = os.RemoveAll(dstDir)
+			stop := filepath.Dir(missingRoot)
+			for cur := filepath.Dir(dstDir); cur != stop; {
+				if os.Remove(cur) != nil {
+					break
+				}
+				next := filepath.Dir(cur)
+				if next == cur {
+					break
+				}
+				cur = next
+			}
+			return
+		}
+		for _, p := range createdLinks {
+			_ = os.RemoveAll(p)
+		}
+	}
+	paths := make(map[string]string, len(rec.Assets))
+	for name, entry := range rec.Assets {
+		dst := filepath.Join(dstDir, name)
+		already, err := staged(ctx, dst)
+		if err != nil {
+			rollback()
+			return nil, false, fmt.Errorf("while staging cached sandbox asset %q: %w", name, err)
+		}
+		if already {
+			if name == gvisorAssetName {
+				paths[name] = filepath.Join(dst, "runsc")
+			} else {
+				paths[name] = dst
+			}
+			continue
+		}
+		var p string
+		var ok bool
+		if name == gvisorAssetName {
+			p, ok, err = s.stageCachedGVisorRelease(ctx, entry, dst)
+		} else {
+			p, ok, err = s.stageCachedAsset(ctx, entry, dst)
+		}
+		if err != nil {
+			rollback()
+			return nil, false, fmt.Errorf("while staging cached sandbox asset %q: %w", name, err)
+		}
+		if !ok {
+			rollback()
+			return nil, false, nil
+		}
+		createdLinks = append(createdLinks, dst)
+		paths[name] = p
+	}
+	return paths, true, nil
+}
+
+// firstMissingAncestor returns the highest path at or above dir that does not
+// exist yet, or "" when dir already exists.
+func firstMissingAncestor(dir string) (string, error) {
+	missing := ""
+	cur := filepath.Clean(dir)
+	for {
+		_, err := os.Stat(cur)
+		if err == nil {
+			return missing, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		missing = cur
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return missing, nil
+		}
+		cur = parent
+	}
+}
+
 // plainAssetName reports whether name is one path element that names a
 // file of its own under the assets dir: not empty, not "." (which Base and
 // IsLocal both accept, and which would make the assets dir itself the
@@ -224,6 +329,29 @@ func (s *Atelet) stageAsset(ctx context.Context, entry assetEntry, dst string) (
 	return dst, nil
 }
 
+// stageCachedAsset links one single-file asset from the local cache to dst
+// without fetching on a miss.
+func (s *Atelet) stageCachedAsset(ctx context.Context, entry assetEntry, dst string) (string, bool, error) {
+	key, err := assetKey(entry)
+	if err != nil {
+		return "", false, err
+	}
+	if ok, err := staged(ctx, dst); err != nil || ok {
+		return dst, ok, err
+	}
+	ok, err := s.sandboxAssetCache.TryGetFileTo(ctx, key, dst)
+	if err != nil {
+		if stagedMeanwhile(ctx, dst, err) {
+			return dst, true, nil
+		}
+		return "", false, err
+	}
+	if !ok {
+		return "", false, nil
+	}
+	return dst, true, nil
+}
+
 // stagedMeanwhile reports whether err from the cache says dst exists: a
 // concurrent call for the same actor, such as a Checkpoint racing a
 // Terminate, staged it first. A hard link is complete the moment it exists,
@@ -283,6 +411,30 @@ func (s *Atelet) stageGVisorRelease(ctx context.Context, entry assetEntry, dst s
 		return "", err
 	}
 	return runscPath, nil
+}
+
+// stageCachedGVisorRelease links an extracted gVisor release tree from the
+// local cache to dst without fetching on a miss.
+func (s *Atelet) stageCachedGVisorRelease(ctx context.Context, entry assetEntry, dst string) (string, bool, error) {
+	runscPath := filepath.Join(dst, "runsc")
+	key, err := assetKey(entry)
+	if err != nil {
+		return "", false, err
+	}
+	if ok, err := staged(ctx, dst); err != nil || ok {
+		return runscPath, ok, err
+	}
+	ok, err := s.sandboxAssetCache.TryGetDirTo(ctx, key, dst)
+	if err != nil {
+		if stagedMeanwhile(ctx, dst, err) {
+			return runscPath, true, nil
+		}
+		return "", false, err
+	}
+	if !ok {
+		return "", false, nil
+	}
+	return runscPath, true, nil
 }
 
 // downloadVerified fetches entry.URL into a new file at path, which must not

@@ -299,3 +299,36 @@ func TestGetKindMismatchIsAnError(t *testing.T) {
 		t.Errorf("fetches ran tree=%d file=%d times, want 1 each (a mismatch must not refetch)", treeCalls.Load(), fileCalls.Load())
 	}
 }
+
+func TestTryGetDirTo(t *testing.T) {
+	s := newTestStore(t)
+	key, err := SHA256Key("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missDst := dstPath(t, s, "tree-miss")
+	ok, err := s.TryGetDirTo(context.Background(), key, missDst)
+	if err != nil || ok {
+		t.Fatalf("TryGetDirTo (miss) = (%v, %v), want (false, nil)", ok, err)
+	}
+	if _, err := os.Lstat(missDst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("miss created destination (lstat err = %v)", err)
+	}
+
+	fetch, _ := treeFetcher(releaseTree)
+	dst1 := dstPath(t, s, "tree-1")
+	if err := s.GetDirTo(context.Background(), key, dst1, fetch); err != nil {
+		t.Fatalf("GetDirTo: %v", err)
+	}
+	dst2 := dstPath(t, s, "tree-2")
+	ok, err = s.TryGetDirTo(context.Background(), key, dst2)
+	if err != nil || !ok {
+		t.Fatalf("TryGetDirTo (hit) = (%v, %v), want (true, nil)", ok, err)
+	}
+	checkTree(t, s, key, dst2, releaseTree)
+
+	if _, err := s.TryGetDirTo(context.Background(), key, dst2); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("TryGetDirTo on existing dst = %v, want fs.ErrExist", err)
+	}
+}

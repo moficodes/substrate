@@ -24,12 +24,14 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 
 	atev1 "go.ate.dev/substrate/api/infra/k8s/ate/v1"
@@ -284,13 +286,38 @@ func wantVersions() *sandboxruntimes.File {
 	return gvisorFile(wantRuntime("v2"), wantRuntime("v1"))
 }
 
-// planAndBuild runs the plan and build steps of syncPod for pod.
+// planAndBuild runs the plan and build steps of syncPod for pod, waiting for
+// any background version preparations they start to finish.
 func planAndBuild(s *workerSandboxSyncer, pod *corev1.Pod) (*sandboxruntimes.File, error) {
 	plan, _, err := s.resolver.plan(pod)
 	if err != nil {
 		return nil, err
 	}
-	return s.buildFile(context.Background(), string(pod.UID), plan, hashVersions(plan))
+	hashed := hashVersions(plan)
+	for {
+		res, err := s.buildFile(context.Background(), string(pod.UID), plan, hashed)
+		if len(res.pendingKeys) > 0 {
+			s.prep.reconcilePod(string(pod.UID), res.pendingKeys, res.failedKeys)
+		} else {
+			s.prep.reconcilePod(string(pod.UID), nil, nil)
+		}
+		if !errors.Is(err, errVersionPreparing) {
+			return res.file, err
+		}
+		s.waitBackground()
+	}
+}
+
+// syncPodSettled runs syncPod for pod until no background version preparations
+// remain pending.
+func syncPodSettled(s *workerSandboxSyncer, ctx context.Context, pod *corev1.Pod) (k8sruntime.Object, error) {
+	for {
+		related, err := s.syncPod(ctx, pod)
+		if !errors.Is(err, errVersionPreparing) {
+			return related, err
+		}
+		s.waitBackground()
+	}
 }
 
 func TestPlanAndBuild(t *testing.T) {
@@ -483,10 +510,10 @@ func TestPlanAndBuildMicroVM(t *testing.T) {
 		t.Errorf("probe calls = %d, want 2: one that failed, one that succeeded and was reused", probeCalls)
 	}
 	// The probe-failure build fetches nothing. The default-failure build
-	// fetches v2, the restorable-failure build fetches v2 then fails on v1,
-	// pod-a fetches v2 and v1 (memoizing v1), and pod-b fetches only the
-	// default v2.
-	wantFetched := []string{"sha-v2", "sha-v2", "sha-v1", "sha-v2", "sha-v1", "sha-v2"}
+	// fetches v2, the restorable-failure build fetches v2 (caching it) then
+	// fails on v1, pod-a serves v2 from cache and fetches v1 (memoizing v1),
+	// and pod-b serves v2 from cache and reuses memoized v1 without fetching.
+	wantFetched := []string{"sha-v2", "sha-v2", "sha-v1", "sha-v1"}
 	if diff := cmp.Diff(wantFetched, fetched); diff != "" {
 		t.Errorf("fetched assets mismatch (-want +got):\n%s", diff)
 	}
@@ -648,7 +675,7 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 				return got
 			}
 
-			if _, err := s.syncPod(ctx, workerPod("pod-a", poolName)); err != nil {
+			if _, err := syncPodSettled(s, ctx, workerPod("pod-a", poolName)); err != nil {
 				t.Fatalf("syncPod(pod-a): %v", err)
 			}
 			if left, err := os.ReadDir(s.scratchDir); err != nil || len(left) != 0 {
@@ -680,7 +707,7 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 			storage.mu.Unlock()
 
 			for _, uid := range []string{"pod-b", "pod-a"} {
-				if _, err := s.syncPod(ctx, workerPod(uid, poolName)); err != nil {
+				if _, err := syncPodSettled(s, ctx, workerPod(uid, poolName)); err != nil {
 					t.Fatalf("syncPod(%s) after eviction with bucket offline: %v", uid, err)
 				}
 				if diff := cmp.Diff(want, readFile(uid)); diff != "" {
@@ -697,7 +724,7 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 			// Promoting the evicted v1 to default while the bucket is offline must fail
 			// the sync and keep pod-a's previous file and default-runtime link in place.
 			cfg.Spec.DefaultVersion = "v1"
-			if _, err := s.syncPod(ctx, workerPod("pod-a", poolName)); err == nil {
+			if _, err := syncPodSettled(s, ctx, workerPod("pod-a", poolName)); err == nil {
 				t.Fatal("syncPod(pod-a) after promoting evicted v1 to default with bucket offline = nil, want error")
 			}
 			if diff := cmp.Diff(want, readFile("pod-a")); diff != "" {
@@ -726,7 +753,7 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 			s.runCPUFeatures = func(context.Context, string) ([]string, error) {
 				return nil, errors.New("re-ran runsc cpu-features for a memoized digest")
 			}
-			if _, err := s.syncPod(ctx, workerPod("pod-a", poolName)); err != nil {
+			if _, err := syncPodSettled(s, ctx, workerPod("pod-a", poolName)); err != nil {
 				t.Fatalf("syncPod(pod-a) after bucket recovery: %v", err)
 			}
 			wantPromoted := classFile(tc.class, wantVersion(v1SHA), wantVersion(v2SHA))
@@ -742,7 +769,7 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 			if stats := evict(); stats.Retired != 0 || stats.SkippedLinked != 2 {
 				t.Errorf("EvictUnused right after the promotion: %+v; want both defaults kept by their links", stats)
 			}
-			if _, err := s.syncPod(ctx, workerPod("pod-b", poolName)); err != nil {
+			if _, err := syncPodSettled(s, ctx, workerPod("pod-b", poolName)); err != nil {
 				t.Fatalf("syncPod(pod-b) after default promotion: %v", err)
 			}
 			if stats := evict(); stats.Retired != 1 || stats.SkippedLinked != 1 || cachedAssets(t, root) != 1 {
@@ -758,7 +785,7 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 			if err := os.RemoveAll(staged("pod-a", v1SHA)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.syncPod(ctx, workerPod("pod-a", poolName)); err != nil {
+			if _, err := syncPodSettled(s, ctx, workerPod("pod-a", poolName)); err != nil {
 				t.Fatalf("syncPod(pod-a) with its default's directory emptied: %v", err)
 			}
 			if !exists(linked("pod-a", v1SHA)) {
@@ -776,16 +803,21 @@ func TestSyncPodAssetCacheAndEviction(t *testing.T) {
 			storage.objects[objKey("v2")] = tc.v2Bytes
 			storage.mu.Unlock()
 			s = newSyncer()
+			var probedMu sync.Mutex
 			var probed []string
 			s.probeCPUIdentity = func() (string, string, error) {
+				probedMu.Lock()
 				probed = append(probed, "host")
+				probedMu.Unlock()
 				return testCPUVendor, testCPUModel, nil
 			}
 			s.runCPUFeatures = func(_ context.Context, runscPath string) ([]string, error) {
+				probedMu.Lock()
 				probed = append(probed, runscPath)
+				probedMu.Unlock()
 				return testCPUFeatures(), nil
 			}
-			if _, err := s.syncPod(ctx, workerPod("pod-a", poolName)); err != nil {
+			if _, err := syncPodSettled(s, ctx, workerPod("pod-a", poolName)); err != nil {
 				t.Fatalf("syncPod(pod-a) in a new process: %v", err)
 			}
 			if got := storage.gets.Load(); got != 5 {
@@ -832,7 +864,7 @@ func TestSyncPodPinsDefaultRuntime(t *testing.T) {
 	if err := os.MkdirAll(stale, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.syncPod(context.Background(), pod); err != nil {
+	if _, err := syncPodSettled(s, context.Background(), pod); err != nil {
 		t.Fatalf("syncPod: %v", err)
 	}
 	wr, ok := s.index.worker("pod-a")
@@ -860,7 +892,7 @@ func TestSyncPodPinsDefaultRuntime(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.syncPod(context.Background(), pod); err != nil {
+	if _, err := syncPodSettled(s, context.Background(), pod); err != nil {
 		t.Fatalf("syncPod again: %v", err)
 	}
 	if !exists(marker) {
@@ -881,7 +913,7 @@ func TestSyncPodPinsDefaultRuntime(t *testing.T) {
 	if err := os.MkdirAll(previous, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.syncPod(context.Background(), pod); err == nil {
+	if _, err := syncPodSettled(s, context.Background(), pod); err == nil {
 		t.Fatal("syncPod with the default's probe failing = nil, want an error")
 	}
 	if !exists(previous) {
@@ -938,16 +970,22 @@ func TestGVisorCPUFeaturesMemoizationAndErrors(t *testing.T) {
 		hashOf := func(name string) string { return wantRuntime(name)[hardware.AttrSandboxBundleHash] }
 
 		s := newTestSyncer(t, resolvedPool("pool", "gvisor-release"), cfg)
+		var stagedMu sync.Mutex
 		var staged []string
 		s.assets = &fakeAssetFetcher{
 			fn: func(_ context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+				stagedMu.Lock()
 				staged = append(staged, bundleHash(rec))
+				stagedMu.Unlock()
 				return map[string]string{gvisorAssetName: "/cache/" + rec.Assets[gvisorAssetName].SHA256 + "/runsc"}, nil
 			},
 		}
+		var execMu sync.Mutex
 		execCalls := make(map[string]int)
 		s.runCPUFeatures = func(_ context.Context, runscPath string) ([]string, error) {
+			execMu.Lock()
 			execCalls[runscPath]++
+			execMu.Unlock()
 			if runscPath == "/cache/sha-v2/runsc" {
 				return feats, nil // bits 0 and 1 -> "3"
 			}
@@ -970,22 +1008,24 @@ func TestGVisorCPUFeaturesMemoizationAndErrors(t *testing.T) {
 		if diff := cmp.Diff(want, got); diff != "" {
 			t.Errorf("planAndBuild() mismatch (-want +got):\n%s", diff)
 		}
-		// The default is staged into the pod's directory and then into
-		// scratch for its probe; each restorable bundle once, v3 for the
-		// asset it adds beside a runsc already probed for v1.
-		if diff := cmp.Diff([]string{hashOf("v2"), hashOf("v2"), hashOf("v1"), bundleHash(v3Rec)}, staged); diff != "" {
-			t.Errorf("bundles staged by the first build (-want +got):\n%s", diff)
+		// Each distinct bundle is prepared once via ensureSandboxAssets: v2
+		// first as default, then v1 and v3 concurrently as restorable versions
+		// (v3 for the extra asset it adds beside v1's runsc).
+		slices.Sort(staged)
+		wantStaged := []string{hashOf("v2"), hashOf("v1"), bundleHash(v3Rec)}
+		slices.Sort(wantStaged)
+		if diff := cmp.Diff(wantStaged, staged); diff != "" {
+			t.Errorf("bundles prepared by the first build (-want +got):\n%s", diff)
 		}
 
-		// Syncing another pod stages the default again, into that pod's
-		// directory, and answers the restorable versions from the memo
-		// alone: no fetch, no runsc.
+		// Syncing another pod links the default from cache and answers the
+		// restorable versions from the memo alone: no fetch, no runsc.
 		staged = nil
 		if _, err := planAndBuild(s, workerPod("pod-b", "pool")); err != nil {
 			t.Fatalf("second planAndBuild() error = %v", err)
 		}
-		if diff := cmp.Diff([]string{hashOf("v2")}, staged); diff != "" {
-			t.Errorf("bundles staged by the second build (-want +got):\n%s", diff)
+		if len(staged) != 0 {
+			t.Errorf("bundles prepared by the second build = %v, want none", staged)
 		}
 		wantCalls := map[string]int{
 			"/cache/sha-v2/runsc": 1,
@@ -1137,7 +1177,7 @@ func TestSyncPodAdvertisesWhatItWrote(t *testing.T) {
 
 	t.Run("a failed sync keeps the entry of the file on disk", func(t *testing.T) {
 		s := newTestSyncer(t, resolvedPool("pool", "gvisor-release"), multiVersionConfig())
-		if _, err := s.syncPod(ctx, pod); err != nil {
+		if _, err := syncPodSettled(s, ctx, pod); err != nil {
 			t.Fatalf("syncPod: %v", err)
 		}
 		before := advertised(t, s)
@@ -1150,7 +1190,7 @@ func TestSyncPodAdvertisesWhatItWrote(t *testing.T) {
 		s.cpuFeatures = map[string]string{}
 		s.mu.Unlock()
 		s.runCPUFeatures = func(context.Context, string) ([]string, error) { return []string{"not_a_known_feature"}, nil }
-		if _, err := s.syncPod(ctx, pod); !errors.Is(err, errPermanent) {
+		if _, err := syncPodSettled(s, ctx, pod); !errors.Is(err, errPermanent) {
 			t.Fatalf("syncPod with the default's probe failing = %v, want errPermanent", err)
 		}
 		if after := advertised(t, s); after.defaultHash != before.defaultHash || !slices.Equal(after.hashes, before.hashes) {
@@ -1168,7 +1208,7 @@ func TestSyncPodAdvertisesWhatItWrote(t *testing.T) {
 				return map[string]string{gvisorAssetName: "sha-v2"}, nil
 			},
 		}
-		if _, err := s.syncPod(ctx, pod); !errors.Is(err, errIncomplete) {
+		if _, err := syncPodSettled(s, ctx, pod); !errors.Is(err, errIncomplete) {
 			t.Fatalf("syncPod with a restorable version failing = %v, want errIncomplete", err)
 		}
 		if cr := advertised(t, s); cr.defaultHash != hashOf("v2") || !slices.Equal(cr.hashes, []string{hashOf("v2")}) {

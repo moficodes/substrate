@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -62,12 +64,16 @@ func testCPUFeatures() []string {
 	}
 }
 
-// fakeAssetFetcher answers ensureSandboxAssets from fn. It creates dstDir as
-// the real fetcher does, but the paths it returns are not under it: the
-// syncer only runs what it is handed, so where the fake says a binary is
-// does not matter.
+// fakeAssetFetcher answers ensureSandboxAssets from fn and caches fetched
+// asset digests in memory so stageCachedSandboxAssets serves hits without
+// calling fn again. It creates dstDir as the real fetcher does, but the paths
+// it returns are not under it: the syncer only runs what it is handed, so
+// where the fake says a binary is does not matter.
 type fakeAssetFetcher struct {
 	fn func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error)
+
+	mu     sync.Mutex
+	cached map[string]string // asset sha256 -> path
 }
 
 func (f *fakeAssetFetcher) ensureSandboxAssets(ctx context.Context, rec *sandboxAssetsRecord, dstDir string) (map[string]string, error) {
@@ -76,7 +82,39 @@ func (f *fakeAssetFetcher) ensureSandboxAssets(ctx context.Context, rec *sandbox
 			return nil, err
 		}
 	}
-	return f.fn(ctx, rec)
+	paths, err := f.fn(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	if f.cached == nil {
+		f.cached = make(map[string]string)
+	}
+	for name, a := range rec.Assets {
+		f.cached[a.SHA256] = paths[name]
+	}
+	f.mu.Unlock()
+	return paths, nil
+}
+
+func (f *fakeAssetFetcher) stageCachedSandboxAssets(_ context.Context, rec *sandboxAssetsRecord, dstDir string) (map[string]string, bool, error) {
+	f.mu.Lock()
+	paths := make(map[string]string, len(rec.Assets))
+	for name, a := range rec.Assets {
+		p, ok := f.cached[a.SHA256]
+		if !ok {
+			f.mu.Unlock()
+			return nil, false, nil
+		}
+		paths[name] = p
+	}
+	f.mu.Unlock()
+	if dstDir != "" {
+		if err := os.MkdirAll(dstDir, 0o700); err != nil {
+			return nil, false, err
+		}
+	}
+	return paths, true, nil
 }
 
 // newTestAssetFetcher returns a sandboxAssetFetcher that maps every asset of
@@ -149,6 +187,12 @@ func resolvedPoolOf(class atev1.SandboxClass, name, config string) *atev1.Worker
 // TestRunRunscCPUFeatures covers the real probe.
 func newTestSyncer(t *testing.T, objs ...any) *workerSandboxSyncer {
 	t.Helper()
+	s, _ := newTestSyncerWithConfigs(t, objs...)
+	return s
+}
+
+func newTestSyncerWithConfigs(t *testing.T, objs ...any) (*workerSandboxSyncer, cache.Indexer) {
+	t.Helper()
 	newIndexer := func() cache.Indexer {
 		return cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
 	}
@@ -179,12 +223,25 @@ func newTestSyncer(t *testing.T, objs ...any) *workerSandboxSyncer {
 	}, pods, newTestAssetFetcher(), t.TempDir(), newRuntimeIndex(), events.NewFakeRecorder(64))
 	// The queue starts a goroutine; stop it with the test.
 	t.Cleanup(s.queue.ShutDown)
-	s.scratchDir = t.TempDir() // buildFile stages assets there
+	s.scratchDir = t.TempDir() // prepareVersion stages assets there
 	s.probeCPUIdentity = func() (string, string, error) { return testCPUVendor, testCPUModel, nil }
 	s.runCPUFeatures = func(context.Context, string) ([]string, error) { return testCPUFeatures(), nil }
 	// Tests that check the jitter set it.
 	s.maxJitter = 0
-	return s
+	return s, configs
+}
+
+// startTestSyncerRun starts s.run with synced caches and stops it cleanly in
+// t.Cleanup.
+func startTestSyncerRun(t *testing.T, s *workerSandboxSyncer) context.CancelFunc {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	go s.run(ctx, func() bool { return true })
+	t.Cleanup(func() {
+		cancel()
+		<-s.done
+	})
+	return cancel
 }
 
 // drain returns the UIDs waiting in the syncer's queue, sorted.
@@ -625,9 +682,14 @@ func TestWorkerSandboxSyncerProcess(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 			s.queue.Add("pod-a")
-			uid, _ := s.queue.Get()
-
-			s.process(ctx, uid)
+			for {
+				uid, _ := s.queue.Get()
+				preparing := s.process(ctx, uid)
+				if !preparing {
+					break
+				}
+				s.waitBackground()
+			}
 
 			var gotEvent string
 			select {
@@ -924,11 +986,6 @@ func TestStartWorkerSandboxSyncer(t *testing.T) {
 			podFactory := kubeinformers.NewSharedInformerFactory(kube, 0)
 			ateFactory := externalversions.NewSharedInformerFactory(ate, 0)
 			ctx, cancel := context.WithCancel(context.Background())
-			t.Cleanup(func() {
-				cancel()
-				podFactory.Shutdown()
-				ateFactory.Shutdown()
-			})
 
 			useTempAssetScratch(t)
 			s, err := startWorkerSandboxSyncer(ctx,
@@ -938,8 +995,17 @@ func TestStartWorkerSandboxSyncer(t *testing.T) {
 				newScriptAssetFetcher(t),
 				dir, newRuntimeIndex(), &events.FakeRecorder{})
 			if err != nil {
+				cancel()
 				t.Fatalf("startWorkerSandboxSyncer() error = %v", err)
 			}
+			// Registered after temp dirs so LIFO cleanup stops the syncer and
+			// all background preps before any t.TempDir is removed.
+			t.Cleanup(func() {
+				cancel()
+				<-s.done
+				podFactory.Shutdown()
+				ateFactory.Shutdown()
+			})
 			ateFactory.Start(ctx.Done())
 			podFactory.Start(ctx.Done())
 
@@ -994,4 +1060,559 @@ func TestWorkerSandboxSyncerRunIndexesExistingPods(t *testing.T) {
 	if _, ok := s.index.worker("pod-orphan"); ok {
 		t.Error("a pod whose pool does not exist was indexed")
 	}
+}
+
+// TestWorkerSandboxSyncerSlowFetchDoesNotStarve verifies that multiple pods
+// waiting on a slow uncached SandboxConfig fetch share one background
+// preparation and do not block cached pod syncs, healthy uncached configs, or
+// directory removal for unrelated pods on the node.
+func TestWorkerSandboxSyncerSlowFetchDoesNotStarve(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestSyncer(t,
+			workerPod("pod-warm", "fast-pool"),
+			workerPod("pod-fast", "fast-pool"),
+			workerPod("pod-healthy-uncached", "healthy-pool"),
+			workerPod("pod-slow-1", "slow-pool"),
+			workerPod("pod-slow-2", "slow-pool"),
+			resolvedPool("fast-pool", "gvisor-cached"),
+			resolvedPool("healthy-pool", "gvisor-healthy"),
+			resolvedPool("slow-pool", "gvisor-slow"),
+			gvisorConfig("gvisor-cached", "gs://bucket/cached", "sha-cached"),
+			gvisorConfig("gvisor-healthy", "gs://bucket/healthy", "sha-healthy"),
+			gvisorConfig("gvisor-slow", "gs://bucket/slow", "sha-slow"),
+		)
+
+		var slowFetches atomic.Int32
+		release := make(chan struct{})
+		s.assets = &fakeAssetFetcher{
+			fn: func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+				if rec.Assets[gvisorAssetName].SHA256 == "sha-slow" {
+					slowFetches.Add(1)
+					select {
+					case <-release:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+				}
+				return newTestAssetFetcher().ensureSandboxAssets(ctx, rec, "")
+			},
+		}
+		startTestSyncerRun(t, s)
+
+		// Warm gvisor-cached so pod-fast can link from cache without fetching.
+		s.queue.Add("pod-warm")
+		synctest.Wait()
+		if !exists(s.runtimesFile("pod-warm")) {
+			t.Fatal("pod-warm file was not written")
+		}
+
+		// Create an orphan worker dir after startup so its removal runs while
+		// slow-pool's fetch is blocked.
+		mkOldDir(t, s.podDir("pod-gone"))
+
+		// Two pods on the same uncached config enter the slow fetch.
+		s.queue.Add("pod-slow-1")
+		s.queue.Add("pod-slow-2")
+		synctest.Wait()
+
+		// While slow-pool is blocked, a cached pod, a healthy uncached pod,
+		// and a directory removal must all complete without waiting.
+		s.queue.Add("pod-fast")
+		s.queue.Add("pod-healthy-uncached")
+		s.queue.Add("pod-gone")
+		synctest.Wait()
+
+		if !exists(s.runtimesFile("pod-fast")) {
+			t.Error("pod-fast was starved by slow-pool's fetch")
+		}
+		if !exists(s.runtimesFile("pod-healthy-uncached")) {
+			t.Error("pod-healthy-uncached was starved by slow-pool's fetch")
+		}
+		if exists(s.podDir("pod-gone")) {
+			t.Error("pod-gone directory removal was starved by slow-pool's fetch")
+		}
+
+		close(release)
+		synctest.Wait()
+
+		for _, uid := range []string{"pod-slow-1", "pod-slow-2"} {
+			if !exists(s.runtimesFile(uid)) {
+				t.Errorf("%s file was not written after fetch completed", uid)
+			}
+		}
+		if got := slowFetches.Load(); got != 1 {
+			t.Errorf("slow config fetched %d times across 2 pods, want 1", got)
+		}
+	})
+}
+
+// TestWorkerSandboxSyncerCancelsOrphanedPrep verifies that deleting the last
+// pod waiting on a slow preparation, or editing its SandboxConfig to a new
+// asset digest, cancels the obsolete preparation without waiting for timeout.
+func TestWorkerSandboxSyncerCancelsOrphanedPrep(t *testing.T) {
+	t.Run("deleting last waiting pod cancels fetch", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			slowPod := workerPod("pod-slow", "slow-pool")
+			s := newTestSyncer(t,
+				slowPod,
+				resolvedPool("slow-pool", "gvisor-slow"),
+				gvisorConfig("gvisor-slow", "gs://bucket/slow", "sha-slow"),
+			)
+
+			var canceled atomic.Bool
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, _ *sandboxAssetsRecord) (map[string]string, error) {
+					<-ctx.Done()
+					canceled.Store(true)
+					return nil, ctx.Err()
+				},
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-slow")
+			synctest.Wait()
+
+			if err := s.pods.Delete(slowPod); err != nil {
+				t.Fatal(err)
+			}
+			s.queue.Add("pod-slow")
+			synctest.Wait()
+
+			if !canceled.Load() {
+				t.Error("in-flight preparation was not canceled after its last waiting pod was deleted")
+			}
+		})
+	})
+
+	t.Run("editing asset digest cancels stalled fetch and finishes on new version", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s, configs := newTestSyncerWithConfigs(t,
+				workerPod("pod-a", "pool"),
+				resolvedPool("pool", "gvisor-edit"),
+				gvisorConfig("gvisor-edit", "gs://bucket/stalled", "sha-stalled"),
+			)
+
+			var oldCanceled atomic.Bool
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+					if rec.Assets[gvisorAssetName].SHA256 == "sha-stalled" {
+						<-ctx.Done()
+						oldCanceled.Store(true)
+						return nil, ctx.Err()
+					}
+					return newTestAssetFetcher().ensureSandboxAssets(ctx, rec, "")
+				},
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-a")
+			synctest.Wait()
+
+			fixed := gvisorConfig("gvisor-edit", "gs://bucket/healthy", "sha-healthy")
+			fixed.Generation = 2
+			if err := configs.Update(fixed); err != nil {
+				t.Fatal(err)
+			}
+			s.queue.Add("pod-a")
+			synctest.Wait()
+
+			if !oldCanceled.Load() {
+				t.Error("stalled fetch on old digest was not canceled after config edit")
+			}
+			if !exists(s.runtimesFile("pod-a")) {
+				t.Error("pod-a file was not written after editing SandboxConfig")
+			}
+		})
+	})
+
+	t.Run("shutdown cancels blocked preparations without recording failure events", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestSyncer(t,
+				workerPod("pod-slow", "slow-pool"),
+				resolvedPool("slow-pool", "gvisor-slow"),
+				gvisorConfig("gvisor-slow", "gs://bucket/slow", "sha-slow"),
+			)
+			recorder := s.recorder.(*events.FakeRecorder)
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, _ *sandboxAssetsRecord) (map[string]string, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				},
+			}
+			cancel := startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-slow")
+			synctest.Wait()
+
+			cancel()
+			<-s.done
+			select {
+			case ev := <-recorder.Events:
+				t.Errorf("unexpected event during shutdown: %q", ev)
+			default:
+			}
+		})
+	})
+}
+
+// TestWorkerSandboxSyncerPartialWritesWhilePreparing covers writing
+// sandbox-runtimes.json while restorable versions are still preparing:
+//   - a new pod advertises its default first and adds ready restorable
+//     versions incrementally as each finishes;
+//   - an existing pod promotes a new default immediately even when a new
+//     restorable version is slow;
+//   - an existing pod after restart keeps already-advertised restorable
+//     runtimes intact while they re-verify, even if a sibling restorable fails.
+func TestWorkerSandboxSyncerPartialWritesWhilePreparing(t *testing.T) {
+	threeVersionConfig := func(defaultVer string) *atev1.SandboxConfig {
+		cfg := multiVersionConfig()
+		cfg.Spec.DefaultVersion = defaultVer
+		v3 := *cfg.Spec.Versions[1].DeepCopy()
+		v3.Name = "v3"
+		v3.Assets[runtime.GOARCH] = map[string]atev1.AssetFile{
+			gvisorAssetName: {URL: "gs://bucket/v3", SHA256: "sha-v3"},
+		}
+		cfg.Spec.Versions = append(cfg.Spec.Versions, v3)
+		return cfg
+	}
+
+	t.Run("new pod writes default then restorable versions incrementally", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestSyncer(t,
+				workerPod("pod-new", "pool"),
+				resolvedPool("pool", "gvisor-release"),
+				threeVersionConfig("v2"),
+			)
+			releaseV1 := make(chan struct{})
+			releaseV3 := make(chan struct{})
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+					switch rec.Assets[gvisorAssetName].SHA256 {
+					case "sha-v1":
+						select {
+						case <-releaseV1:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					case "sha-v3":
+						select {
+						case <-releaseV3:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+					return newTestAssetFetcher().ensureSandboxAssets(ctx, rec, "")
+				},
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-new")
+			synctest.Wait()
+
+			got, err := sandboxruntimes.Read(s.runtimesFile("pod-new"))
+			if err != nil {
+				t.Fatalf("pod-new file was not written with default v2: %v", err)
+			}
+			if diff := cmp.Diff(gvisorFile(wantRuntime("v2")), got); diff != "" {
+				t.Errorf("default-only file mismatch (-want +got):\n%s", diff)
+			}
+
+			// v1 finishes while v3 stays slow: v1 must be added immediately.
+			close(releaseV1)
+			synctest.Wait()
+			got, err = sandboxruntimes.Read(s.runtimesFile("pod-new"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(gvisorFile(wantRuntime("v2"), wantRuntime("v1")), got); diff != "" {
+				t.Errorf("incremental restorable file mismatch (-want +got):\n%s", diff)
+			}
+
+			close(releaseV3)
+			synctest.Wait()
+			got, err = sandboxruntimes.Read(s.runtimesFile("pod-new"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(gvisorFile(wantRuntime("v2"), wantRuntime("v1"), wantRuntime("v3")), got); diff != "" {
+				t.Errorf("final file mismatch (-want +got):\n%s", diff)
+			}
+		})
+	})
+
+	t.Run("default promotion writes immediately while a new restorable version is slow", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s, configs := newTestSyncerWithConfigs(t,
+				workerPod("pod-a", "pool"),
+				resolvedPool("pool", "gvisor-release"),
+				gvisorConfig("gvisor-release", "gs://bucket/v1", "sha-v1"),
+			)
+			// Pre-populate with v1 as default, then promote cached v2 while v3 is slow.
+			if err := os.MkdirAll(s.podDir("pod-a"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sandboxruntimes.Write(s.runtimesFile("pod-a"), gvisorFile(wantRuntime("v1"))); err != nil {
+				t.Fatal(err)
+			}
+			releaseV3 := make(chan struct{})
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+					if rec.Assets[gvisorAssetName].SHA256 == "sha-v3" {
+						select {
+						case <-releaseV3:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+					return newTestAssetFetcher().ensureSandboxAssets(ctx, rec, "")
+				},
+			}
+			promoted := threeVersionConfig("v2")
+			promoted.Generation = 2
+			if err := configs.Update(promoted); err != nil {
+				t.Fatal(err)
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-a")
+			synctest.Wait()
+
+			got, err := sandboxruntimes.Read(s.runtimesFile("pod-a"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(gvisorFile(wantRuntime("v2"), wantRuntime("v1")), got); diff != "" {
+				t.Errorf("promoted default was held back by slow restorable v3 (-want +got):\n%s", diff)
+			}
+			close(releaseV3)
+			synctest.Wait()
+		})
+	})
+
+	t.Run("existing file on restart keeps pending restorable runtimes even if a sibling fails", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestSyncer(t,
+				workerPod("pod-existing", "pool"),
+				resolvedPool("pool", "gvisor-release"),
+				threeVersionConfig("v2"),
+			)
+			initial := gvisorFile(wantRuntime("v2"), wantRuntime("v1"), wantRuntime("v3"))
+			if err := os.MkdirAll(s.podDir("pod-existing"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sandboxruntimes.Write(s.runtimesFile("pod-existing"), initial); err != nil {
+				t.Fatal(err)
+			}
+
+			releaseV3 := make(chan struct{})
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+					switch rec.Assets[gvisorAssetName].SHA256 {
+					case "sha-v1":
+						return nil, errors.New("v1 bucket failure")
+					case "sha-v3":
+						select {
+						case <-releaseV3:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					}
+					return newTestAssetFetcher().ensureSandboxAssets(ctx, rec, "")
+				},
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-existing")
+			synctest.Wait()
+
+			// While v3 is still re-verifying (even after v1 already failed),
+			// pod-existing must keep v3 on disk without flickering it out.
+			got, err := sandboxruntimes.Read(s.runtimesFile("pod-existing"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(initial, got); diff != "" {
+				t.Errorf("existing file flickered while v3 was still re-verifying (-want +got):\n%s", diff)
+			}
+
+			close(releaseV3)
+			synctest.Wait()
+
+			// Once v3 finishes, pod-existing settles to [v2, v3] and records
+			// the failure for v1.
+			got, err = sandboxruntimes.Read(s.runtimesFile("pod-existing"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(gvisorFile(wantRuntime("v2"), wantRuntime("v3")), got); diff != "" {
+				t.Errorf("settled file after v3 completed mismatch (-want +got):\n%s", diff)
+			}
+			if wr, ok := s.index.worker("pod-existing"); !ok {
+				t.Error("pod-existing was not indexed after settling")
+			} else if cr, ok := wr.class(atev1.SandboxClassGvisor); !ok || len(cr.hashes) != 2 {
+				t.Errorf("pod-existing indexed runtimes = %+v, want v2 and v3", cr)
+			}
+		})
+	})
+}
+
+// TestWorkerSandboxSyncerMultipleFailingRestorablesNoPingPong verifies that
+// two or more failing restorable versions settle together instead of
+// re-launching each other without backoff.
+func TestWorkerSandboxSyncerMultipleFailingRestorablesNoPingPong(t *testing.T) {
+	threeVersionConfig := func() *atev1.SandboxConfig {
+		cfg := multiVersionConfig()
+		v3 := *cfg.Spec.Versions[1].DeepCopy()
+		v3.Name = "v3"
+		v3.Assets[runtime.GOARCH] = map[string]atev1.AssetFile{
+			gvisorAssetName: {URL: "gs://bucket/v3", SHA256: "sha-v3"},
+		}
+		cfg.Spec.Versions = append(cfg.Spec.Versions, v3)
+		return cfg
+	}
+
+	t.Run("two permanently failing restorables converge and stop", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestSyncer(t,
+				workerPod("pod-a", "pool"),
+				resolvedPool("pool", "gvisor-release"),
+				threeVersionConfig(),
+			)
+			var attempts atomic.Int32
+			s.runCPUFeatures = func(_ context.Context, runscPath string) ([]string, error) {
+				if runscPath == "/cache/sha-v2/gvisor" {
+					return testCPUFeatures(), nil
+				}
+				attempts.Add(1)
+				return []string{"unknown_feature"}, nil
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-a")
+			synctest.Wait()
+			// Advance fake clock past backoff windows to prove nothing retries.
+			time.Sleep(10 * time.Second)
+			synctest.Wait()
+
+			if got := attempts.Load(); got != 2 {
+				t.Errorf("permanently failing restorables probed %d times, want 2 (once each)", got)
+			}
+			if got := s.queue.NumRequeues("pod-a"); got != 0 {
+				t.Errorf("NumRequeues = %d, want 0 after permanent restorable failures settled", got)
+			}
+		})
+	})
+
+	t.Run("two transiently failing restorables back off instead of looping", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := newTestSyncer(t,
+				workerPod("pod-a", "pool"),
+				resolvedPool("pool", "gvisor-release"),
+				threeVersionConfig(),
+			)
+			var v1Calls, v3Calls atomic.Int32
+			releaseV3 := make(chan struct{})
+			s.assets = &fakeAssetFetcher{
+				fn: func(ctx context.Context, rec *sandboxAssetsRecord) (map[string]string, error) {
+					switch rec.Assets[gvisorAssetName].SHA256 {
+					case "sha-v1":
+						v1Calls.Add(1)
+						return nil, errors.New("v1 transient error")
+					case "sha-v3":
+						v3Calls.Add(1)
+						select {
+						case <-releaseV3:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+						return nil, errors.New("v3 transient error")
+					}
+					return newTestAssetFetcher().ensureSandboxAssets(ctx, rec, "")
+				},
+			}
+			startTestSyncerRun(t, s)
+
+			s.queue.Add("pod-a")
+			synctest.Wait()
+			// v1 already failed while v3 is still running; v1 must NOT be
+			// re-launched before v3 finishes.
+			if got := v1Calls.Load(); got != 1 {
+				t.Fatalf("v1 fetched %d times while v3 was still running, want 1", got)
+			}
+
+			close(releaseV3)
+			synctest.Wait()
+
+			// Both v1 and v3 have failed once; pod-a must now wait on the 1s
+			// rate limiter without immediately re-launching either.
+			if v1Calls.Load() != 1 || v3Calls.Load() != 1 {
+				t.Errorf("initial attempt counts v1=%d v3=%d, want 1 each", v1Calls.Load(), v3Calls.Load())
+			}
+			if got := s.queue.NumRequeues("pod-a"); got != 1 {
+				t.Errorf("NumRequeues = %d, want 1", got)
+			}
+		})
+	})
+}
+
+// TestWorkerSandboxSyncerDetachedProbeSurvivesPodDelete verifies that deleting
+// the pod that started a runsc cpu-features probe does not cancel the probe
+// for another pod whose bundle shares the same runsc digest.
+func TestWorkerSandboxSyncerDetachedProbeSurvivesPodDelete(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfgA := gvisorConfig("cfg-a", "gs://bucket/a", "sha-shared")
+		cfgB := gvisorConfig("cfg-b", "gs://bucket/b", "sha-shared")
+		cfgB.Spec.Versions[0].Assets[runtime.GOARCH]["extra"] = atev1.AssetFile{URL: "gs://bucket/extra", SHA256: "sha-extra"}
+		podA := workerPod("pod-a", "pool-a")
+		podB := workerPod("pod-b", "pool-b")
+		s := newTestSyncer(t,
+			podA, podB,
+			resolvedPool("pool-a", "cfg-a"),
+			resolvedPool("pool-b", "cfg-b"),
+			cfgA, cfgB,
+		)
+
+		probeEntered := make(chan struct{})
+		releaseProbe := make(chan struct{})
+		var probeCalls atomic.Int32
+		s.runCPUFeatures = func(ctx context.Context, _ string) ([]string, error) {
+			if probeCalls.Add(1) == 1 {
+				close(probeEntered)
+			}
+			select {
+			case <-releaseProbe:
+				return testCPUFeatures(), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		startTestSyncerRun(t, s)
+
+		// Start pod-a first so it leads the probe, then join with pod-b.
+		s.queue.Add("pod-a")
+		<-probeEntered
+		s.queue.Add("pod-b")
+		synctest.Wait()
+
+		// Delete pod-a while the probe is still running.
+		if err := s.pods.Delete(podA); err != nil {
+			t.Fatal(err)
+		}
+		s.queue.Add("pod-a")
+		synctest.Wait()
+
+		// Release the probe: pod-b must succeed without error or re-probing.
+		close(releaseProbe)
+		synctest.Wait()
+
+		if !exists(s.runtimesFile("pod-b")) {
+			t.Error("pod-b did not write its file after pod-a was deleted mid-probe")
+		}
+		if got := probeCalls.Load(); got != 1 {
+			t.Errorf("runCPUFeatures called %d times, want 1", got)
+		}
+		if got := s.queue.NumRequeues("pod-b"); got != 0 {
+			t.Errorf("pod-b NumRequeues = %d, want 0", got)
+		}
+	})
 }

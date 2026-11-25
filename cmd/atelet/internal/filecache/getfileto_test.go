@@ -413,3 +413,52 @@ func TestGetFileToKeepsExecuteBits(t *testing.T) {
 		})
 	}
 }
+
+func TestTryGetFileTo(t *testing.T) {
+	s := newTestStore(t)
+	key := URIKey("gs://bucket/golden", "mem.img")
+
+	// Miss returns (false, nil) without creating dst.
+	missDst := dstPath(t, s, "miss")
+	ok, err := s.TryGetFileTo(context.Background(), key, missDst)
+	if err != nil || ok {
+		t.Fatalf("TryGetFileTo (miss) = (%v, %v), want (false, nil)", ok, err)
+	}
+	if _, err := os.Lstat(missDst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("miss created destination (lstat err = %v)", err)
+	}
+
+	// Populate via GetFileTo, then TryGetFileTo links the same inode.
+	fetch, _ := countingFetcher("cached bytes")
+	dst1 := dstPath(t, s, "d1")
+	if err := s.GetFileTo(context.Background(), key, dst1, fetch); err != nil {
+		t.Fatalf("GetFileTo: %v", err)
+	}
+	dst2 := dstPath(t, s, "d2")
+	ok, err = s.TryGetFileTo(context.Background(), key, dst2)
+	if err != nil || !ok {
+		t.Fatalf("TryGetFileTo (hit) = (%v, %v), want (true, nil)", ok, err)
+	}
+	fi1, err := os.Stat(dst1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi2, err := os.Stat(dst2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(fi1, fi2) {
+		t.Error("TryGetFileTo did not hard-link the cached inode")
+	}
+
+	// Invalid arguments return errors.
+	if _, err := s.TryGetFileTo(context.Background(), Key{}, dstPath(t, s, "zero")); err == nil {
+		t.Error("TryGetFileTo accepted zero Key")
+	}
+	if _, err := s.TryGetFileTo(context.Background(), key, "relative"); err == nil {
+		t.Error("TryGetFileTo accepted relative destination")
+	}
+	if _, err := s.TryGetFileTo(context.Background(), key, dst2); !errors.Is(err, os.ErrExist) {
+		t.Errorf("TryGetFileTo on existing dst = %v, want os.ErrExist", err)
+	}
+}
