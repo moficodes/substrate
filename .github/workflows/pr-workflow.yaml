@@ -208,6 +208,73 @@ jobs:
       env:
         BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}
       run: hack/verify/postgresql-migrations.sh "origin/${BASE_REF#refs/heads/}"
+  # Builds the control-plane, worker, demo, and envoy-dataplane images plus the
+  # ate-setup binary once, so the e2e matrix lanes load them into kind-registry
+  # and install with --image-repo/--image-tag.
+  build-e2e-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Cache the envoy-dataplane Rust build. Only main writes it, so PRs
+      # share one copy instead of each storing their own.
+      DOCKER_BUILD_FLAGS: >-
+        --cache-from type=gha,scope=envoy-dataplane
+        ${{ github.ref == 'refs/heads/main'
+          && '--cache-to type=gha,mode=max,scope=envoy-dataplane,ignore-error=true' || '' }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+    - name: Setup Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: 'go.mod'
+        cache: false
+    - name: Restore Go build cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: e2e-images-go-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          e2e-images-go-${{ runner.os }}-
+          e2e-go-${{ runner.os }}-
+    - name: Set up Docker Buildx
+      # The docker-container driver is what can use the GitHub Actions cache.
+      # Host networking and plain HTTP let it push to the local build registry.
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      with:
+        driver-opts: network=host
+        buildkitd-config-inline: |
+          [registry."localhost:5001"]
+            http = true
+    - name: Expose GitHub runtime to buildx
+      # buildx's gha cache backend reads these from the environment, but the
+      # runner only passes them to actions, not to run steps.
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          for (const [key, value] of Object.entries(process.env)) {
+            if (key.startsWith('ACTIONS_')) core.exportVariable(key, value);
+          }
+    - name: Build E2E images and ate-setup
+      run: .github/scripts/e2e/build-images.sh "${RUNNER_TEMP}/e2e-images"
+    - name: Upload E2E images
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: e2e-images
+        path: ${{ runner.temp }}/e2e-images
+        compression-level: 0
+        retention-days: 1
+        if-no-files-found: error
+    - name: Save Go build cache
+      if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: e2e-images-go-${{ runner.os }}-${{ github.sha }}
   # Free x86-64 ubuntu-latest runners expose /dev/kvm (with a udev rule), so
   # create-kind-cluster.sh mounts it and the micro-VM (kata + cloud-hypervisor)
   # sandbox class works alongside gVisor.
@@ -216,11 +283,12 @@ jobs:
   # below are written once and run for every dataplane, sandbox class and
   # preview mode. The e2e-test job below reports the required checks.
   e2e:
+    needs: build-e2e-images
     name: >-
       ${{ format('e2e ({0}, {1}{2})', matrix.dataplane, matrix.sandbox, matrix.preview == 'on' && ', preview' || '') }}
     runs-on: ubuntu-latest
-    # Cluster bring-up, image builds and one lane; generous, but far short of
-    # the six-hour platform default a hung lane would otherwise consume.
+    # Cluster bring-up and one lane; generous, but far short of the six-hour
+    # platform default a hung lane would otherwise consume.
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -263,13 +331,6 @@ jobs:
       # preview features, e2e-gvisor-preview with them.
       LANE: e2e-${{ matrix.sandbox }}${{ matrix.preview == 'on' && '-preview' || '' }}
       ARTIFACTS: ${{ github.workspace }}/_artifacts
-      # Cache the envoy-dataplane Rust build. Only main writes it, so PRs
-      # share one copy instead of each storing their own.
-      DOCKER_BUILD_FLAGS: >-
-        --cache-from type=gha,scope=envoy-dataplane
-        ${{ github.ref == 'refs/heads/main' && matrix.dataplane == 'envoy' && matrix.preview == 'off'
-          && matrix.sandbox == 'gvisor'
-          && '--cache-to type=gha,mode=max,scope=envoy-dataplane,ignore-error=true' || '' }}
     steps:
     - name: Checkout
       uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -288,24 +349,11 @@ jobs:
           ~/go/pkg/mod
         key: e2e-go-${{ runner.os }}-${{ github.sha }}
         restore-keys: e2e-go-${{ runner.os }}-
-    - name: Set up Docker Buildx
-      # The docker-container driver is what can use the GitHub Actions cache.
-      # Host networking and plain HTTP let it push to the kind registry.
-      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - name: Download E2E images
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
       with:
-        driver-opts: network=host
-        buildkitd-config-inline: |
-          [registry."localhost:5001"]
-            http = true
-    - name: Expose GitHub runtime to buildx
-      # buildx's gha cache backend reads these from the environment, but the
-      # runner only passes them to actions, not to run steps.
-      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-      with:
-        script: |
-          for (const [key, value] of Object.entries(process.env)) {
-            if (key.startsWith('ACTIONS_')) core.exportVariable(key, value);
-          }
+        name: e2e-images
+        path: ${{ runner.temp }}/e2e-images
     - name: Restore microVM assets
       id: microvm-assets
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -328,12 +376,14 @@ jobs:
         sudo udevadm trigger --name-match=kvm
     - name: Create cluster
       run: hack/create-kind-cluster.sh
+    - name: Load E2E images
+      run: .github/scripts/e2e/load-images.sh "${RUNNER_TEMP}/e2e-images"
     - name: Install Agent Substrate (${{ matrix.dataplane }})
       # The dataplane selection applies to both the ingress router and egress
       # gateway. ATE_PREVIEW above selects the preview features.
       env:
         ATE_ATENET_DATAPLANE: ${{ matrix.dataplane }}
-      run: go run ./cmd/ate-setup --kind deploy ate-system
+      run: ./bin/ate-setup --kind --image-repo=localhost:5001 --image-tag=e2e deploy ate-system
     - name: Save microVM assets
       if: >-
         ${{ github.ref == 'refs/heads/main' && steps.microvm-assets.outputs.cache-hit != 'true'
@@ -348,7 +398,7 @@ jobs:
         sudo modprobe nfs || true
         sudo modprobe nfsd || true
     - name: Install CSI NFS driver
-      run: go run ./cmd/ate-setup --kind setup csi nfs
+      run: ./bin/ate-setup --kind --image-repo=localhost:5001 --image-tag=e2e setup csi nfs
     # Deploy only the demos for the class under test. The suites build their
     # actors from the counter and egress ActorTemplates for that class. The
     # egress demo's actors trust the CA the gateway mints its leaves from.
@@ -356,8 +406,8 @@ jobs:
       env:
         DEMO_SUFFIX: ${{ matrix.sandbox == 'microvm' && '-microvm' || '' }}
       run: |
-        go run ./cmd/ate-setup --kind deploy demo "counter${DEMO_SUFFIX}"
-        go run ./cmd/ate-setup --kind deploy demo "egress${DEMO_SUFFIX}"
+        ./bin/ate-setup --kind --image-repo=localhost:5001 --image-tag=e2e deploy demo "counter${DEMO_SUFFIX}"
+        ./bin/ate-setup --kind --image-repo=localhost:5001 --image-tag=e2e deploy demo "egress${DEMO_SUFFIX}"
     - name: Trust local TLS origins in egress gateway
       run: hack/setup-e2e-egress-tls-kind.sh
     - name: Run E2E tests (${{ matrix.sandbox }})
