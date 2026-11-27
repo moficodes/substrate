@@ -175,6 +175,20 @@ if [[ -z "${E2E_JUNIT_FILE:-}" && "${CI:-}" == "true" ]]; then
     exit 1
 fi
 
+# Share one temporary ko image-digest cache across every suite binary in this
+# run so fixture images are built and pushed once instead of once per test.
+ko_cache_dir=""
+cleanup_ko_cache() {
+    if [[ -n "${ko_cache_dir}" ]]; then
+        rm -rf "${ko_cache_dir}"
+    fi
+}
+trap cleanup_ko_cache EXIT
+if [[ -z "${E2E_KO_CACHE_DIR:-}" ]]; then
+    ko_cache_dir="$(mktemp -d "${TMPDIR:-/tmp}/ate-e2e-ko.XXXXXX")"
+    export E2E_KO_CACHE_DIR="${ko_cache_dir}"
+fi
+
 # E2E_JUNIT_FILE opts into a machine-readable record of the run: the XML for
 # report consumers, the JSON event stream for failure analysis. Unset, this is a
 # plain go test and gotestsum is never built, so a local run needs no toolchain
@@ -187,12 +201,13 @@ if [[ -n "${E2E_JUNIT_FILE:-}" ]]; then
     # that `junittool verify` will report as missing. junittool rejects a path
     # another run already claimed, which would otherwise be overwritten.
     go -C "${ROOT}/tools/junittool" run . register "${E2E_JUNIT_FILE}"
-    exec "${ROOT}/hack/run-tool.sh" gotestsum \
+    "${ROOT}/hack/run-tool.sh" gotestsum \
         --junitfile "${E2E_JUNIT_FILE}" \
         --jsonfile "${E2E_JUNIT_FILE%.xml}.json" \
         --format standard-verbose \
         -- "${test_argv[@]}"
+    exit 0
 fi
 
-exec go test -v "${test_argv[@]}"
+go test -v "${test_argv[@]}"
 

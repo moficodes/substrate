@@ -178,7 +178,7 @@ func TestIngressCache_SuspendMidRequestIsNotReplayed(t *testing.T) {
 	e2e.RequireIngressCache(t)
 	ctx := context.Background()
 	clients := e2e.GetClients()
-	fixture := deployWebsocketFixture(t, ctx)
+	fixture := deployWebsocketFixture(t, ctx, "websocket-cache")
 	_, actorName, _ := createAndResumeSubstrateActor(t, ctx, "cache-spoil", fixture)
 	router := mustRouterClient(t, ctx)
 	defer router.Close()
@@ -379,7 +379,7 @@ func TestIngressCache_GRPCBypassesCache(t *testing.T) {
 	ctx := context.Background()
 	clients := e2e.GetClients()
 
-	fixture := deployGRPCEchoTemplate(t, ctx)
+	fixture := deployGRPCEchoTemplate(t, ctx, "networking-cache")
 	_, actorName, _ := createAndResumeSubstrateActor(t, ctx, "cache-grpc", fixture)
 	actorRef := resources.ActorRef{Atespace: networkingAtespace, Name: actorName}
 	ctx = metadata.AppendToOutgoingContext(ctx,

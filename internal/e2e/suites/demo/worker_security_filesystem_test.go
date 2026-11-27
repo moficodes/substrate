@@ -188,6 +188,7 @@ func assertCloudHypervisor(t *testing.T, procs []procstatus.Process) {
 // restore that a root-only counter does not exercise, and that the kernel
 // enforces the worker's fixed capability set while an actor runs.
 func TestWorkerSecurityFilesystem(t *testing.T) {
+	t.Parallel()
 	clients := e2e.GetClients()
 	src := e2e.SubstrateCounterFixture()
 	pool, err := clients.SubstrateK8s.AteV1().WorkerPools(src.PoolNamespace).Get(t.Context(), src.PoolName, metav1.GetOptions{})

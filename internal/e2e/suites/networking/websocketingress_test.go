@@ -30,7 +30,7 @@ import (
 
 // deployWebsocketFixture installs the websocket fixture for the sandbox class
 // under test and waits for its golden snapshot.
-func deployWebsocketFixture(t *testing.T, ctx context.Context) e2e.SubstrateFixture {
+func deployWebsocketFixture(t *testing.T, ctx context.Context, name string) e2e.SubstrateFixture {
 	t.Helper()
 	if _, err := e2e.CheckEnv("KO_DOCKER_REPO"); err != nil {
 		t.Fatalf("CheckEnv failed: %v", err)
@@ -39,7 +39,7 @@ func deployWebsocketFixture(t *testing.T, ctx context.Context) e2e.SubstrateFixt
 	atespace, _ := e2e.DeploySubstrateFixture(t, ctx, e2e.GetClients(), e2e.SubstrateFixtureManifests{
 		Pool:     "internal/e2e/fixtures/testserver/websocket.yaml.tmpl",
 		Template: "internal/e2e/fixtures/testserver/websocket-template.yaml.tmpl",
-	}, "websocket", nil)
+	}, name, nil)
 
 	return e2e.SubstrateFixture{
 		Atespace:   atespace,
@@ -51,7 +51,7 @@ func deployWebsocketFixture(t *testing.T, ctx context.Context) e2e.SubstrateFixt
 func TestWebsocketIngressPing(t *testing.T) {
 	ctx := context.Background()
 
-	fixture := deployWebsocketFixture(t, ctx)
+	fixture := deployWebsocketFixture(t, ctx, "websocket")
 
 	_, actorName, _ := createAndResumeSubstrateActor(t, ctx, "websocket", fixture)
 
